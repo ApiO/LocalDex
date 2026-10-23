@@ -1,0 +1,93 @@
+# ================================================================
+# Synty monorepo
+# Place this file at the repository root (alongside all 3 folders):
+#   SyntyDownloader/
+#   SyntyLibrary/
+#   SyntyLocalDex/
+# ================================================================
+
+# Downloaded assets: do not commit the library's contents.
+# An optional .gitkeep file lets Git retain the empty directory.
+/SyntyLibrary/*
+!/SyntyLibrary/.gitkeep
+
+# Python environments, caches, and generated packaging files
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.pyre/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Downloader: authentication/session data and sync history
+.synty_browser_profile/
+.synty_history.json
+.synty_sync.log
+# Alternative session/profile names (if configured)
+SyntyDownloader/browser_profile/
+SyntyDownloader/user_data/
+
+# Local Dex: generated database, catalog and cached previews
+/SyntyLocalDex/.localdex/
+# SQLite temporary journal files (other custom index locations)
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Downloader account credentials and local output directory.
+# config.example.yaml remains tracked as documentation.
+/SyntyDownloader/config.yaml
+
+# Local configuration and secrets (templates can still be committed)
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# Logs, interrupted downloads and disposable runtime files
+*.log
+*.log.*
+*.tmp
+*.temp
+*.part
+*.partial
+*.crdownload
+*.download
+*.pyc
+
+# Browser/tool test output
+playwright-report/
+test-results/
+node_modules/
+
+# Local editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Note: already tracked files are NOT removed by .gitignore.
+# See: git rm -r --cached SyntyLibrary

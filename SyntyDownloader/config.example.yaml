@@ -1,0 +1,9 @@
+# Copy this file to config.yaml, then enter your own login details.
+# config.yaml is ignored by Git; never commit real credentials.
+# Relative paths are resolved from the directory containing config.yaml.
+output_dir: ../SyntyLibrary
+
+login:
+  email: "your-email@example.com"
+  password: ""                  # Usually unused for e-mail OTP login
+  customer_id: "YOUR_CUSTOMER_ID"

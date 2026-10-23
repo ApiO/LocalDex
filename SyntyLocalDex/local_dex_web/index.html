@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Local Dex | Your Synty Library</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Local Dex home">
+      <div class="brand-mark"><span>LD</span></div>
+      <div><strong>LOCAL<span>DEX</span></strong><small>SYNTY ASSET LIBRARY</small></div>
+    </a>
+    <div class="sidebar-label">WORKSPACE</div>
+    <nav class="nav-list" aria-label="Browse">
+      <button class="nav-link active" data-page="overview"><span class="nav-icon">◫</span> Overview</button>
+      <button class="nav-link" data-page="packs"><span class="nav-icon">▦</span> Asset packs <span id="side-pack-count" class="nav-count">—</span></button>
+      <button class="nav-link" data-page="assets"><span class="nav-icon">◇</span> Assets <span id="side-asset-count" class="nav-count">—</span></button>
+      <button class="nav-link" data-page="files"><span class="nav-icon">≡</span> Download files</button>
+      <button class="nav-link" data-page="statistics"><span class="nav-icon">▥</span> Statistics</button>
+    </nav>
+    <div class="sidebar-label sidebar-label-second">COLLECTIONS</div>
+    <nav id="sidebar-collections" class="nav-list" aria-label="Collections"></nav>
+    <div class="sidebar-bottom">
+      <div class="offline-pill"><span class="status-dot"></span> 100% LOCAL · PRIVATE</div>
+      <span id="index-date" class="sidebar-index-date">Not indexed</span>
+      <div class="sidebar-note">This browser uses only the assets stored on your computer. No cloud service or account required.</div>
+      <button id="sidebar-index-btn" class="sidebar-action">↻ &nbsp; Rebuild index</button>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <main class="main-content">
+      <section id="statistics-view" class="statistics-view" aria-label="Library statistics" hidden>
+        <div class="section-top statistics-heading">
+          <div><div class="eyebrow">LOCAL LIBRARY INSIGHTS</div>
+            <h2>Statistics</h2><p>A summary of downloaded packs and indexed assets.</p>
+          </div>
+        </div>
+      <section id="stats-grid" class="stat-grid" aria-label="Collection statistics">
+        <div class="stat-card"><span class="stat-label">ASSET PACKS</span><div class="stat-value" id="stat-packs">—</div><span class="stat-foot">In your library</span><div class="stat-icon">▦</div></div>
+        <div class="stat-card"><span class="stat-label">DISCOVERABLE ASSETS</span><div class="stat-value" id="stat-assets">—</div><span class="stat-foot">From files and archives</span><div class="stat-icon">◇</div></div>
+        <div class="stat-card"><span class="stat-label">DOWNLOADED FILES</span><div class="stat-value" id="stat-files">—</div><span class="stat-foot">Stored on this PC</span><div class="stat-icon">↓</div></div>
+        <div class="stat-card"><span class="stat-label">STORAGE USED</span><div class="stat-value" id="stat-bytes">—</div><span class="stat-foot">Original asset files</span><div class="stat-icon">◈</div></div>
+      </section>
+
+        <div class="stats-breakdowns">
+          <section class="stats-breakdown" aria-labelledby="stats-collections-title">
+            <div class="stats-breakdown-header"><h3 id="stats-collections-title">Collections</h3><span>Packages by collection</span></div>
+            <div id="stats-collections" class="stats-rows"></div>
+          </section>
+          <section class="stats-breakdown" aria-labelledby="stats-types-title">
+            <div class="stats-breakdown-header"><h3 id="stats-types-title">Asset types</h3><span>Indexed asset formats</span></div>
+            <div id="stats-types" class="stats-rows"></div>
+          </section>
+          <section class="stats-breakdown" aria-labelledby="stats-categories-title">
+            <div class="stats-breakdown-header"><h3 id="stats-categories-title">Categories</h3><span>Inferred from filenames and paths</span></div>
+            <div id="stats-categories" class="stats-rows"></div>
+          </section>
+          <section class="stats-breakdown" aria-labelledby="stats-largest-title">
+            <div class="stats-breakdown-header"><h3 id="stats-largest-title">Largest packages</h3><span>Downloaded storage on disk</span></div>
+            <div id="stats-largest" class="stats-rows"></div>
+          </section>
+        </div>
+      </section>
+
+      <div id="browse-view">
+      <section id="pack-detail" class="pack-detail" aria-label="Package contents" hidden>
+        <button type="button" class="back-packs" data-action="back-packs">← All packs</button>
+        <div class="pack-detail-main">
+          <div id="pack-detail-cover" class="pack-detail-cover"></div>
+          <div class="pack-detail-info">
+            <div class="eyebrow">PACK EXPLORER</div>
+            <h1 id="pack-detail-name"></h1>
+            <div id="pack-detail-meta" class="pack-detail-meta"></div>
+            <div class="pack-detail-controls">
+              <button type="button" class="btn btn-outline" data-action="reveal-pack-current">▣ Open package folder</button>
+              <button type="button" class="btn btn-outline" data-action="copy-pack-path">Copy folder name</button>
+            </div>
+          </div>
+        </div>
+        <div class="pack-content-tabs" role="group" aria-label="Pack content type">
+          <button type="button" class="pack-tab active" data-action="pack-tab" data-tab="assets">Discoverable assets</button>
+          <button type="button" class="pack-tab" data-action="pack-tab" data-tab="files">Downloaded files</button>
+        </div>
+      </section>
+      <div class="section-top" id="section-top">
+        <div><div class="eyebrow">BROWSE YOUR LIBRARY</div><h2 id="section-title">Your asset packs</h2><p id="section-subtitle">Explore every pack in your local collection.</p></div>
+      </div>
+      <div class="toolbar">
+        <label class="search-wrap" for="search-input"><span class="search-icon">⌕</span><input id="search-input" type="search" placeholder="Search packs, models, props, textures..." autocomplete="off"><kbd>/</kbd></label>
+        <select id="collection-filter" aria-label="Collection"><option value="">All collections</option></select>
+        <select id="kind-filter" aria-label="Asset type"><option value="">All asset types</option></select>
+        <select id="category-filter" aria-label="Asset category"><option value="">All categories</option></select>
+        <select id="engine-filter" aria-label="Engine"><option value="">All engines</option><option value="Unity">Unity</option><option value="Unreal">Unreal</option><option value="Any">Any</option></select>
+        <button id="clear-filters" class="clear-button" title="Reset filters">Clear</button>
+      </div>
+      <div class="results-heading"><div><span id="result-count">—</span> <span id="result-label">packs found</span><span class="filter-note" id="filter-note"></span></div><div class="small-legend">READ-ONLY CATALOG &nbsp; ◌</div></div>
+      <div id="results" class="pack-grid" aria-live="polite"></div>
+      <div class="load-more-row"><button class="btn btn-outline" id="load-more" hidden>Load more assets ↓</button></div>
+      <div class="library-footnote">Local Dex is an independent offline browser and is not affiliated with Synty Studios.</div>
+      </div>
+    </main>
+  </div>
+
+  <aside class="details-panel" id="details-panel" aria-label="Selection details">
+    <div class="details-heading"><div><span class="details-eyebrow">QUICK INSPECTOR</span><h3>Asset details</h3></div><button id="close-details" class="panel-close" title="Close details">×</button></div>
+    <div id="details-body" class="details-empty"><div class="details-empty-icon">◇</div><strong>Nothing selected</strong><p>Choose a pack or an asset to see its source, location and details.</p></div>
+    <div class="details-bottom"><div class="details-lock">◎ &nbsp; Your files stay on your device</div></div>
+  </aside>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
