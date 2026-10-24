@@ -31,8 +31,11 @@ const imageExt = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const videoExt = new Set(['.mp4', '.webm']);
 const audioExt = new Set(['.mp3', '.wav', '.ogg']);
 let searchTimer, toastTimer, requestId = 0, viewerToken = 0, closeFbxViewer = null;
-let pendingAsset = null;
 const THEME_KEY = 'synty-local-dex-theme-v1';
+const ASSET_VIEW_KEY = 'synty-local-dex-assets-view-v1';
+const PACK_VIEW_KEY = 'synty-local-dex-pack-view-v1';
+let assetViewMode = 'grid';
+let packViewMode = 'grid';
 const AUTO_LOAD_MARGIN = 400;
 let listingBusy = false;
 let autoMoreBlocked = false;
@@ -71,7 +74,7 @@ function initAutoLoadMore() {
 }
 
 // Drag the left edge of the right-hand inspector. The CSS grid takes the
-// panel width from --details-width, so the Assets list contracts naturally.
+// panel width from --details-width, so the active asset listing contracts naturally.
 let detailsWidth = null;
 let detailsResizePointer = null;
 function detailsWidthLimits() {
@@ -216,6 +219,67 @@ function assetCard(a) {
   </button>`;
 }
 
+// A compact row view works in Assets and Pack Explorer (both pack tabs).
+// Both formats reuse the same select-asset action as the grid cards.
+function assetListRow(a) {
+  const ext = (a.ext || '').toLowerCase();
+  const filename = escapeHtml(a.name);
+  const path = escapeHtml(a.inner_path || a.source_rel || '');
+  const thumbnail = imageExt.has(ext)
+    ? `<img loading="lazy" src="${previewUrl(a)}" alt="" class="asset-thumb-image">`
+    : ext === '.fbx'
+      ? `<img loading="lazy" src="/api/fbx-thumb/${encodeURIComponent(a.id)}" alt="" class="asset-thumb-image">`
+      : `<span class="asset-kind-icon">${icons[a.kind] || '◇'}</span>`;
+  return `<button type="button" class="asset-list-row ${state.selected?.id === a.id ? 'selected' : ''}"
+    data-action="select-asset" data-id="${escapeHtml(a.id)}" aria-label="Inspect ${filename}">
+    <span class="asset-list-thumb">${thumbnail}</span>
+    <span class="asset-list-description"><strong title="${filename}">${filename}</strong>
+      <small title="${path}">${path}</small></span>
+    <span class="asset-list-pack" title="${escapeHtml(a.pack_name || '')}">${escapeHtml(a.pack_name || '')}</span>
+    <span class="asset-list-type">${pill(a.kind, 'pink')}</span>
+    <span class="asset-list-engine">${a.engine && a.engine !== 'Any' ? pill(a.engine) : '<span class="list-muted">—</span>'}</span>
+  </button>`;
+}
+function listingIsList() {
+  return (state.page === 'assets' && assetViewMode === 'list')
+    || (state.page === 'pack' && packViewMode === 'list');
+}
+function listColumnHeaders() {
+  return `<div class="asset-list-columns" aria-hidden="true"><span>Preview</span><span>Filename / source path</span><span>Package</span><span>Type</span><span>Engine</span></div>`;
+}
+function listingMarkup(items) {
+  return items.map(listingIsList() ? assetListRow : assetCard).join('');
+}
+function renderListingFromState() {
+  if (state.page !== 'assets' && state.page !== 'pack') return;
+  const node = $('results');
+  node.className = listingIsList() ? 'asset-list' : 'pack-grid';
+  if (!state.items.length) return; // Preserve loading or error placeholders.
+  node.innerHTML = (listingIsList() ? listColumnHeaders() : '') + listingMarkup(state.items);
+  requestAnimationFrame(checkAutoLoadMore);
+}
+function updateListingViewButtons() {
+  const current = state.page === 'pack' ? packViewMode : assetViewMode;
+  for (const option of ['grid', 'list']) {
+    const btn = $(`asset-view-${option}`);
+    const selected = current === option;
+    btn.classList.toggle('active', selected);
+    btn.setAttribute('aria-pressed', String(selected));
+  }
+}
+function applyAssetView(mode, persist = true) {
+  const next = mode === 'list' ? 'list' : 'grid';
+  const inPack = state.page === 'pack';
+  if (inPack) packViewMode = next;
+  else assetViewMode = next;
+  updateListingViewButtons();
+  if (persist) {
+    try { localStorage.setItem(inPack ? PACK_VIEW_KEY : ASSET_VIEW_KEY, next); }
+    catch (_) { /* Fall back to the in-memory preference. */ }
+  }
+  renderListingFromState();
+}
+
 function renderSidebar() {
   $('side-pack-count').textContent = prettyNum(state.catalog.stats.packs);
   $('side-asset-count').textContent = prettyNum(state.catalog.stats.assets);
@@ -293,7 +357,7 @@ function applyPage(page, resetFilters = false) {
   const isPack = page === 'pack';
   const isStatistics = page === 'statistics';
   const isConfiguration = page === 'configuration';
-  const showDetails = page === 'assets';
+  const showDetails = page === 'assets' || isPack;
   $('details-panel').hidden = !showDetails;
   document.querySelector('.app-shell').classList.toggle('has-details', showDetails);
   if (!showDetails) $('details-panel').classList.remove('open');
@@ -304,6 +368,8 @@ function applyPage(page, resetFilters = false) {
   $('browse-view').hidden = isStatistics || isConfiguration;
   $('pack-detail').hidden = !isPack;
   $('section-top').hidden = isPack;
+  $('asset-view-toggle').hidden = !showDetails;
+  updateListingViewButtons();
   if (isPack) {
     if (!packById()) return navigate('packs');
     showPackHeader();
@@ -329,16 +395,7 @@ function applyPage(page, resetFilters = false) {
     : page === 'assets' ? 'Search models, names, file paths...' : 'Search pack name, collection, theme...';
   renderSidebar();
   if (isConfiguration) refreshConfiguration();
-  else if (!isStatistics) {
-    if (page === 'assets' && pendingAsset) {
-      // Clicking an asset inside a pack switches to the only page with an inspector.
-      const selected = pendingAsset;
-      pendingAsset = null;
-      state.search = selected.name;
-      $('search-input').value = selected.name;
-      refresh().then(() => { if (state.page === 'assets') showAssetDetails(selected); });
-    } else refresh();
-  }
+  else if (!isStatistics) refresh();
 }
 function clearFilters(refreshNow = true) {
   for (const key of ['search', 'collection', 'kind', 'category', 'engine']) state[key] = '';
@@ -357,7 +414,8 @@ function routeFromHash() {
     .includes(location.hash.slice(2)) ? location.hash.slice(2) : 'overview';
   const newPack = route ? route[1] : '';
   if (page !== state.page || newPack !== state.pack) {
-    clearFilters(false); state.packTab = 'assets'; state.selected = null;
+    clearFilters(false); state.packTab = 'assets';
+    resetAssetDetails();
     $('details-panel').classList.remove('open');
   }
   state.pack = newPack;
@@ -415,7 +473,7 @@ async function refresh(more = false) {
         state.items.push(...nextItems);
         // Append rather than re-render all cards: preserves existing thumbnails,
         // scroll position and any previews already loaded in the grid.
-        $('results').insertAdjacentHTML('beforeend', nextItems.map(assetCard).join(''));
+        $('results').insertAdjacentHTML('beforeend', listingMarkup(nextItems));
       } else {
         // Do not hammer a backend returning an empty page with more expected.
         state.currentPage -= 1;
@@ -423,8 +481,8 @@ async function refresh(more = false) {
       }
     } else {
       state.items = nextItems;
-      $('results').className = 'pack-grid';
-      $('results').innerHTML = state.items.length ? state.items.map(assetCard).join('')
+      $('results').className = listingIsList() ? 'asset-list' : 'pack-grid';
+      $('results').innerHTML = state.items.length ? (listingIsList() ? listColumnHeaders() : '') + listingMarkup(state.items)
         : '<div class="empty"><div class="empty-symbol">◇</div><strong>Nothing found</strong><p>Try another name, format, or category.</p></div>';
     }
     $('result-count').textContent = prettyNum(result.total);
@@ -450,21 +508,25 @@ async function refresh(more = false) {
     }
   }
 }
+function resetAssetDetails() {
+  viewerToken++;
+  if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; }
+  state.selected = null;
+  $('details-body').className = 'details-empty';
+  $('details-body').innerHTML = '<div class="details-empty-icon">◇</div><strong>Nothing selected</strong><p>Select an asset to inspect its preview, source and metadata.</p>';
+}
 function openPanel() {
-  if (state.page === 'assets') $('details-panel').classList.add('open');
+  if (state.page === 'assets' || state.page === 'pack') $('details-panel').classList.add('open');
 }
 function selectAsset(id) {
+  if (state.page !== 'assets' && state.page !== 'pack') return;
   const a = state.items.find(x => x.id === id);
   if (!a) return;
-  if (state.page !== 'assets') {
-    pendingAsset = a;
-    navigate('assets');
-    return;
-  }
+  // Keep the Pack Explorer route, filters, active tab and pagination untouched.
   showAssetDetails(a);
 }
 function showAssetDetails(a) {
-  if (state.page !== 'assets') return;
+  if (state.page !== 'assets' && state.page !== 'pack') return;
   const id = a.id;
   viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; }
   state.selected = { type: 'asset', id }; openPanel();
@@ -499,7 +561,7 @@ function showAssetDetails(a) {
       <button class="btn btn-outline" data-action="copy" data-text="${escapeHtml(locationText)}">Copy source path</button>
       <button class="btn btn-outline" data-action="select-pack" data-id="${escapeHtml(a.pack_id)}">Browse whole pack →</button>
     </div></div>`;
-  document.querySelectorAll('.asset-card').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
+  document.querySelectorAll('.asset-card, .asset-list-row').forEach(el => el.classList.toggle('selected', el.dataset.id === id));
   if (ext === '.obj') startObjPreview(a, viewerToken);
   if (ext === '.fbx') startFbxPreview(a, viewerToken);
 }
@@ -709,6 +771,8 @@ function bind() {
       return applyPage('packs');
     }
     if (action === 'pack-tab') {
+      resetAssetDetails();
+      $('details-panel').classList.remove('open');
       state.packTab = button.dataset.tab; clearFilters(false); showPackHeader(); applyPage('pack'); return;
     }
     if (action === 'reveal-pack-current') {
@@ -751,6 +815,8 @@ function bind() {
   ['collection-filter', 'kind-filter', 'category-filter', 'engine-filter'].forEach(id => $(id).addEventListener('change', filtersChanged));
   $('clear-filters').addEventListener('click', () => clearFilters());
   $('load-more').addEventListener('click', () => requestMore(false));
+  $('asset-view-grid').addEventListener('click', () => applyAssetView('grid'));
+  $('asset-view-list').addEventListener('click', () => applyAssetView('list'));
   initAutoLoadMore();
   initDetailsResize();
   $('close-details').addEventListener('click', () => { viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; } $('details-panel').classList.remove('open'); });
@@ -773,7 +839,12 @@ function bind() {
   });
 }
 async function boot() {
+  try {
+    assetViewMode = localStorage.getItem(ASSET_VIEW_KEY) === 'list' ? 'list' : 'grid';
+    packViewMode = localStorage.getItem(PACK_VIEW_KEY) === 'list' ? 'list' : 'grid';
+  } catch (_) { assetViewMode = 'grid'; packViewMode = 'grid'; }
   applyTheme(document.documentElement.dataset.theme);
+  applyAssetView(assetViewMode, false);
   bind();
   try {
     const [catalog, session] = await Promise.all([api('/api/catalog'), api('/api/session')]);

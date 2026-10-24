@@ -169,7 +169,16 @@
         <select id="engine-filter" aria-label="Engine"><option value="">All engines</option><option value="Unity">Unity</option><option value="Unreal">Unreal</option><option value="Any">Any</option></select>
         <button id="clear-filters" class="clear-button" title="Reset filters">Clear</button>
       </div>
-      <div class="results-heading"><div><span id="result-count">—</span> <span id="result-label">packs found</span><span class="filter-note" id="filter-note"></span></div><div class="small-legend">READ-ONLY CATALOG &nbsp; ◌</div></div>
+      <div class="results-heading">
+        <div><span id="result-count">—</span> <span id="result-label">packs found</span><span class="filter-note" id="filter-note"></span></div>
+        <div class="results-actions">
+          <div id="asset-view-toggle" class="asset-view-toggle" role="group" aria-label="Asset display mode (Grid or List)" hidden>
+            <button type="button" id="asset-view-grid" class="asset-view-button active" aria-pressed="true" title="Grid view">▦ <span>Grid</span></button>
+            <button type="button" id="asset-view-list" class="asset-view-button" aria-pressed="false" title="List view">☷ <span>List</span></button>
+          </div>
+
+        </div>
+      </div>
       <div id="results" class="pack-grid" aria-live="polite"></div>
       <div class="load-more-row"><button class="btn btn-outline" id="load-more" hidden>Load more assets ↓</button></div>
       <div class="library-footnote">Local Dex is an independent offline browser and is not affiliated with Synty Studios.</div>

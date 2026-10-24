@@ -1,247 +1,130 @@
-# Synty Library — Downloader & LocalDex
+# Synty Library — Local Dex & Downloader
 
-A local workflow for **downloading, organizing, indexing, and browsing a personal [Synty Store](https://syntystore.com/) asset library** on Windows.
+A **local, private browser** for the Synty assets you own. Use the Web UI to install the downloader, synchronize your purchases, index the downloaded files, and search your asset library.
 
-This repository contains three neighboring folders with separate responsibilities:
+![Local Dex overview — asset pack browser](docs/overview.jpg)
 
-| Folder | Responsibility | Tracked in Git? |
-| --- | --- | --- |
-| [`SyntyDownloader/`](SyntyDownloader/) | Sign in to Synty Store, download entitled packages, and remember completed downloads. | **Yes**, except runtime files and secrets. |
-| [`SyntyLibrary/`](SyntyLibrary/) | Store the original downloaded packages and related files, grouped by package name. | **No** downloaded assets; optionally track `.gitkeep`. |
-| [`SyntyLocalDex/`](SyntyLocalDex/) | Build a searchable offline catalog and serve a local asset browser. | **Yes**, except generated indexes and caches. |
+*Local Dex overview, showing the sidebar, package covers, collections, and search.*
 
-> **Disclaimers:**
-- LocalDex is inspired by [Synty(r) Dex](https://dex.syntystore.com/) but is not an official product of Synty Studios.
-- The download tool only accesses files available to the logged-in account. None of its components bypass the site's access controls.
-- Should the structure of the official Synty website change, this solution will cease to function and an update will be required.
-- If an official API becomes available in the future, this solution will utilize it.
+> **Independent project:** This is an unofficial, local tool inspired by SyntyDex; it is not affiliated with Synty Studios. Downloads require your own authorized [Synty Store](https://syntystore.com/) account. Assets remain subject to their original licenses.
 
-## 1. Repository layout
+## Quick start (Windows 11)
+
+**Requirements:** Windows 11 and **Python 3.10+**. You only need Python to start the Web UI; the **Configuration** page can then install and repair the downloader's other dependencies (including Playwright Chromium).
+
+1. Clone or extract this repository. Keep these three directories **next to each other**. The drive letter and parent directory do not matter.
+2. Double-click **`SyntyLocalDex/open_local_dex.cmd`**. Local Dex opens a browser at **http://127.0.0.1:8765**. Leave the console open while using the site.
+3. Open **Configuration** in the left sidebar, then follow the steps below. On a fresh checkout, Local Dex can create an initial empty index and library folder automatically.
+
+If Python is not available yet, install Python 3.10+ first (or use `SyntyDownloader/install_synty_sync.cmd` as a bootstrap installer), then open Local Dex.
+
+### Set up everything from Configuration
+
+| Action in Configuration | What to do |
+| --- | --- |
+| **Install / Repair** | Installs or checks the downloader environment, Python packages, and Chromium. The status panel reports whether the downloader is ready. |
+| **Open config.yaml** | Edit your Synty account details and verify that `output_dir` is set to `../SyntyLibrary`. If the file does not exist, first copy `SyntyDownloader/config.example.yaml` to `SyntyDownloader/config.yaml`. |
+| **Sync downloads** | Signs in using your account and fetches missing downloadable files. Complete the email verification code (2FA) when prompted. Use **Headless mode** only with a valid saved login session. |
+| **Sync assets / Rebuild index** | Scans `SyntyLibrary`, refreshes the searchable index and pack covers, and updates the browser with new assets. |
+
+The page displays **installation readiness, operation state, last execution dates, and recent logs**. Run **Sync assets / Rebuild index** after the initial download, or whenever files change. The downloader does not delete or overwrite your existing downloaded files.
+
+> **Prefer command-line tools?** `SyntyDownloader` is fully usable **without Local Dex or its Web UI**. See [Run the downloader directly](#run-the-downloader-directly) below. Similarly, `SyntyLocalDex/rebuild_local_dex.cmd` can index an existing library without downloading anything.
+
+## Browse your library
+
+The left sidebar provides:
+
+- **Overview / Asset packs** — browse pack covers, collections, and package contents. Clicking a pack opens its indexed assets and downloaded files.
+- **Assets** — search individual files, filter by collection/type/category/engine, and switch between **Grid** and **List** views using the controls above the results. List view shows each filename, source path, package, asset type, and engine. Your chosen view is remembered in this browser.
+- **Asset Details** — appears on the Assets page after selecting a file. Inspect its preview, origin, and local path; drag its left edge to resize the panel.
+- **Statistics** — explore totals, storage, collections, asset types, and largest packages.
+- **Configuration** — check readiness, install/repair the downloader, run download synchronization, rebuild the asset index, and view operation logs.
+
+The search lists load more results automatically as you scroll. A manual **Load more** button remains available. A sidebar toggle switches between **Light** and **Dark** themes; your choice is saved locally in your browser.
+
+**Preview support:** common images, animated GIFs, video, audio, OBJ geometry, and supported FBX static meshes (including inside ZIP and Unity packages). FBX materials, textures, rigging, and animation are not fully reconstructed; unsupported formats still provide file metadata. Archive inspection and previews do not require modifying your original downloads.
+
+## Repository layout
 
 ```text
-<root>/                             # Git repository root; any drive or parent folder
+Synty/                          # Move this parent directory anywhere
+├── README.md
+├── docs/
+│   └── overview.jpg            # Screenshot shown above
 ├── .gitignore
-├── README.md                       # This file
 ├── SyntyDownloader/
-│   ├── synty_sync.py               # Store sync and download logic
-│   ├── synty_requirements.txt
-│   ├── config.example.yaml         # Safe template; tracked
-│   ├── config.yaml                 # Local credentials; Git-ignored
-│   ├── install_synty_sync.cmd      # Windows installer entry point
-│   ├── install_synty_sync.ps1
-│   ├── run_synty_sync.cmd          # Downloader-only launcher
-│   ├── run_synty_sync.ps1
-│   └── .venv/                      # Generated; Git-ignored
+│   ├── config.example.yaml     # Safe configuration template (tracked)
+│   ├── config.yaml             # Your private configuration (ignored by Git)
+│   ├── synty_sync.py
+│   └── install_synty_sync.cmd
 ├── SyntyLibrary/
-│   ├── .gitkeep                    # Optional placeholder
-│   ├── POLYGON - Adventure Pack/
-│   │   ├── Preview.jpg             # Example cover at package root
-│   │   └── SourceFiles.zip         # Example download
-│   ├── ANIMATION - Bow Combat/
-│   │   └── ...
-│   ├── .synty_history.json         # Generated; Git-ignored
-│   ├── .synty_sync.log             # Generated; Git-ignored
-│   └── .synty_browser_profile/     # Generated browser session; Git-ignored
+│   └── <package name>/         # Downloaded files (ignored by Git)
+│       ├── Preview.jpg
+│       └── SourceFiles.zip
 └── SyntyLocalDex/
-    ├── build_local_dex.py          # Asset indexer
-    ├── local_dex_server.py         # Local HTTP server
-    ├── fbx_geometry.py             # FBX mesh preview support
-    ├── local_dex_web/              # HTML, CSS, JS and viewers
-    ├── rebuild_local_dex.cmd       # Index existing downloads
-    ├── open_local_dex.cmd          # Start local web app
-    ├── sync_and_rebuild_dex.cmd    # Downloader → indexer
-    ├── tests/
-    └── .localdex/                  # Generated database, catalog, preview caches; Git-ignored
+    ├── open_local_dex.cmd
+    ├── rebuild_local_dex.cmd
+    ├── local_dex_web/          # Local Web UI
+    └── .localdex/              # Generated database and caches (ignored)
 ```
 
-The three directories must remain siblings, but the repository can be relocated to another drive or directory. LocalDex resolves `../SyntyLibrary` relative to its own scripts and uses `../SyntyDownloader/.venv` when available.
+Paths are relative to the sibling folders; **`D:\Synty` is not required**. `SyntyDownloader/config.yaml` should use:
 
-## 2. Quick start (Windows 11)
+```yaml
+output_dir: ../SyntyLibrary
 
-**Requirements:** Windows 11, internet connectivity for downloading/installing, and Python **3.10+**. The downloader uses [Playwright](https://playwright.dev/python/) and Chromium. The supplied installer can install Python through `winget` if necessary.
+login:
+  email: "your-email@example.com"
+  password: ""            # Usually not needed for email-code sign-in
+  customer_id: "YOUR_CUSTOMER_ID"
+```
 
-1. Clone or extract the repository, keeping all three folders together.
-2. Double-click **`SyntyDownloader/install_synty_sync.cmd`**. It creates `.venv`, installs Python dependencies, and installs Chromium for Playwright.
-3. Edit **`SyntyDownloader/config.yaml`**: set `login.email`, optional `login.password`, and `login.customer_id`. The default `output_dir: ../SyntyLibrary` points to the sibling library. `config.yaml` is Git-ignored; `config.example.yaml` is a safe tracked template.
-4. Double-click **`SyntyLocalDex/sync_and_rebuild_dex.cmd`**. It runs an interactive first-package sync, then the full headless sync, then rebuilds the local catalog. The launcher sends downloads to the *sibling* `SyntyLibrary/` folder automatically.
-5. Double-click **`SyntyLocalDex/open_local_dex.cmd`** and open **http://127.0.0.1:8765**. Keep its console running while using the browser; `Ctrl+C` stops the server.
+Use your own Synty customer ID. Do not commit `config.yaml`, Chromium profiles, credentials, or downloaded files.
 
-For an existing downloaded library, **skip synchronization** and run `SyntyLocalDex/rebuild_local_dex.cmd` directly before opening the browser.
+## Run the downloader directly
 
-The `.cmd` launchers manage PowerShell execution policy with a **process-scoped** `-ExecutionPolicy Bypass` where needed; they do not permanently change the machine's settings. Organization-enforced policies may still take precedence.
+This is optional if you use the **Configuration** page. You can run synchronization independently on Windows:
 
-## 3. SyntyDownloader — downloading and synchronization
-
-`SyntyDownloader/synty_sync.py` uses a real Chromium browser to authenticate and navigate Synty Store pages (there is no required public download API):
-
-- Supports interactive login, including an email-delivered one-time verification code when requested by the store.
-- Reuses the saved browser profile on later runs, while the session remains valid.
-- Follows paginated package lists and downloads every linked file for each package.
-- Preserves the original downloaded files under `SyntyLibrary/<package name>/<filename>`; **it does not automatically extract, delete, or overwrite them**.
-- Records successful download links in `.synty_history.json` so later runs can skip an existing file. Failed transfers are not marked as completed.
-- Records errors and progress in `.synty_sync.log`. Incomplete transfers may remain under `.synty-partials/` for inspection.
-
-### Run Downloader separately
-
-From **the repository root**, with the virtual environment already installed:
+1. Configure `SyntyDownloader/config.yaml` (copy it from `config.example.yaml` if necessary).
+2. Run `SyntyDownloader/install_synty_sync.cmd` once to install or repair dependencies.
+3. Run `SyntyDownloader/run_synty_sync.cmd` for the normal two-stage interactive/headless download sequence. Alternatively, from `SyntyDownloader/`:
 
 ```powershell
-cd .\SyntyDownloader
-
-# Validate config.yaml without opening the browser
 .\.venv\Scripts\python.exe .\synty_sync.py --check-config
-
-# Show the browser; download only the first package for verification
 .\.venv\Scripts\python.exe .\synty_sync.py --limit-packages 1
-
-# Then synchronize everything with the saved browser session
 .\.venv\Scripts\python.exe .\synty_sync.py --headless
 ```
 
-Add `--dry-run` to inspect packages without downloading, or use `--delay 3` to slow down requests. A new login may require another visible, interactive run before using `--headless`.
+The downloader uses the configured `output_dir`, preserves existing files, and records download history for incremental syncs. You can also refresh the Dex catalog independently with `SyntyLocalDex/rebuild_local_dex.cmd`.
 
-> **Configuration priority:** `config.yaml` is the single source of truth for the normal launcher. Its relative `output_dir` is resolved relative to the YAML file, not the working directory. The optional Python `--output` flag is a manual override. For compatibility with the existing Dex launcher, PowerShell still accepts `-OutputDir`, but ignores it with a warning. Keep `output_dir: ../SyntyLibrary` when using Dex’s combined launcher, which indexes the sibling library.
+## Data, privacy, and troubleshooting
 
-See [`SyntyDownloader/README_synty_sync.md`](SyntyDownloader/README_synty_sync.md) and [`SyntyDownloader/INSTALLATION_WINDOWS.md`](SyntyDownloader/INSTALLATION_WINDOWS.md) for downloader-specific details, where included.
+- **Local-only:** The Web UI listens on `127.0.0.1:8765`; it is not a hosted/cloud catalog. Downloading from Synty Store does require internet access.
+- **Private files:** The root `.gitignore` excludes downloaded assets, browser sessions, download history, secrets, virtual environments, `__pycache__`, the `.localdex` database, and other generated files.
+- **Missing Python:** Install Python 3.10+ and restart `open_local_dex.cmd`.
+- **Downloader not ready:** Open **Configuration**, check the status text, configure `config.yaml`, and select **Install / Repair** when appropriate.
+- **Verification code or expired session:** Run a non-headless download sync to complete login in Chromium or the Configuration panel.
+- **Missing/new files in search:** Use **Configuration → Sync assets / Rebuild index**.
+- **Server port already in use:** Close the existing Dex window/server, or start `local_dex_server.py --port 8766` from the Dex directory.
 
-## 4. SyntyLibrary — source of truth for downloads
+For implementation details, see the component-specific documentation: [`SyntyDownloader/README_synty_sync.md`](SyntyDownloader/README_synty_sync.md) and [`SyntyLocalDex/README_LOCAL_DEX.md`](SyntyLocalDex/README_LOCAL_DEX.md).
 
-Each package has its own directory, with the downloaded files left intact:
+## License
 
-```text
-SyntyLibrary/
-├── POLYGON - Adventure Pack/
-│   ├── Adventure_Preview.jpg
-│   ├── POLYGON_Adventure_SourceFiles.zip
-│   └── POLYGON_Adventure.unitypackage
-└── ANIMATION - Bow Combat/
-    └── ANIMATION_BowCombat.zip
-```
+The original project source code in **SyntyDownloader** and **SyntyLocalDex**
+is distributed under the **GNU General Public License v3.0 only**
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text and
+[NOTICE](NOTICE) for project attribution.
 
-LocalDex uses folder names and paths to **infer** collections (for example, `POLYGON` and `ANIMATION`), file types, categories and engine hints. These are heuristic labels, not guaranteed official metadata.
+You may use, study, modify, and redistribute the code, including
+commercially. If you **distribute** a modified version, GPLv3 requires
+you to meet its copyleft and corresponding-source requirements, keep
+applicable notices, and identify your changes. Private modifications
+that you do not distribute do not have to be published solely because
+you modified the code. Prior copies already distributed under Apache-2.0
+retain the permissions granted for those copies.
 
-When a supported image (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.avif`) exists **directly in the package directory**, LocalDex prefers the **first filename alphabetically** for the pack cover. Images inside subfolders or archives are considered fallback candidates. Root images are subject to a size limit.
-
-**Do not commit downloaded assets.** They can be large and are associated with your account/license. The root `.gitignore` excludes `SyntyLibrary/*` while allowing `SyntyLibrary/.gitkeep` if present.
-
-## 5. SyntyLocalDex — offline catalog and browser
-
-LocalDex reads the folder structure and supported archive contents, then builds a catalog separate from your downloads:
-
-```text
-SyntyLocalDex/.localdex/
-├── index.sqlite3       # Searchable index
-├── catalog.json        # Consolidated library metadata
-├── covers/             # Cached cover previews
-└── fbx_thumbs/         # Generated FBX thumbnails, when supported
-```
-
-### Browser capabilities
-
-- **Overview, Asset packs, Assets, Download files, Statistics** in the left navigation.
-- Clicking a **pack card** opens that package's content, with discoverable assets and downloaded files.
-- Search and filter by name/path, collection, inferred category, file type, and engine.
-- Inspect an asset's source archive/path and open its location in Windows Explorer.
-- Use the **Rebuild index** action in the sidebar to update the catalog.
-- The **Statistics** page includes totals, collection breakdowns, type/category counts and largest packages.
-- Asset cards use large thumbnails; hover over the **info icon** for the full filename with extension.
-
-### Preview support and limitations
-
-| Asset format | Preview behavior |
-| --- | --- |
-| PNG, JPG, WebP, GIF and other supported images | Image preview; animated image formats may animate. |
-| MP4, WebM | Video player. |
-| MP3, WAV, OGG | Audio player. |
-| OBJ | Interactive geometry preview. |
-| FBX (binary/ASCII, supported mesh layouts) | Interactive **static-mesh** 3D preview and generated thumbnail, including from ZIP/Unity packages. |
-| Unity prefabs, Unreal engine assets, unsupported models | Indexed name/path and source details, without full native rendering. |
-
-FBX preview is deliberately lightweight. It does **not** reproduce full materials/textures, skeletal animation, rigging, or all transforms; some FBX files cannot be rendered. For supported archive members, preview data is decompressed **on demand**, not extracted into `SyntyLibrary`. Large files are subject to safety limits.
-
-ZIP and `.unitypackage` contents can be indexed without unpacking the whole archive. `.rar`, `.7z`, and nested archives are not exhaustively inspected. File naming conventions determine the quality of discovered asset data.
-
-### Rebuild or run from the command line
-
-The simplest way is to double-click:
-
-```text
-SyntyLocalDex\rebuild_local_dex.cmd
-SyntyLocalDex\open_local_dex.cmd
-```
-
-Alternatively, from `SyntyLocalDex/` with Python 3.10+:
-
-```powershell
-py -3 .\build_local_dex.py
-py -3 .\local_dex_server.py
-```
-
-The index is **incremental** for unchanged source files. Rebuilding can update or remove stale **catalog records**, but never deletes the original downloads. To speed up indexing large libraries, use `--skip-unity-contents` when running `build_local_dex.py` (at the cost of fewer discoverable assets).
-
-By default, the HTTP server binds to **127.0.0.1:8765**. It is local-only, not a publicly hosted website, and it does not need Synty credentials. Keep the console open while browsing.
-
-See [`SyntyLocalDex/README_LOCAL_DEX.md`](SyntyLocalDex/README_LOCAL_DEX.md) for component-specific notes.
-
-## 6. Recommended daily workflow
-
-1. Run **`SyntyLocalDex/sync_and_rebuild_dex.cmd`** to fetch new purchases and update the index in one operation.
-2. Run **`SyntyLocalDex/open_local_dex.cmd`** to explore the current offline library.
-3. If you add or rename files manually, use **Rebuild index** in the browser or `rebuild_local_dex.cmd`.
-
-The downloader and indexer are independent: the browser can be used entirely offline against previously downloaded files.
-
-## 7. Git and security
-
-The root `.gitignore` excludes:
-
-- Original assets under `SyntyLibrary/`, plus download history, browser profile/cookies, incomplete transfers, and logs.
-- Python virtual environments and caches (`.venv/`, `__pycache__/`, `.pytest_cache/`, etc.).
-- Dex-generated `.localdex/` database, metadata and preview caches.
-- Temporary files, local `.env` configuration and common IDE/OS output.
-
-Initialize and inspect the repository from its root:
-
-```powershell
-git init
-git add .
-git status
-git commit -m "Initial Synty tooling"
-```
-
-**Important:** keep real account details in `SyntyDownloader/config.yaml`, which the repository `.gitignore` excludes. Never commit that file, the browser profile, or the download history (which may include e-mail-bearing URLs). Git ignores do not retroactively remove files that were already tracked; use `git rm --cached SyntyDownloader/config.yaml` if necessary. The Chromium profile and download history can expose account/session information and must remain private.
-
-If any library files were tracked before adding `.gitignore`, remove them from Git's index **without deleting local files**:
-
-```powershell
-git rm -r --cached -- SyntyLibrary
-git add .
-git status
-```
-
-## 8. Troubleshooting
-
-| Problem | What to check |
-| --- | --- |
-| Python not found | Run `SyntyDownloader/install_synty_sync.cmd`; ensure Python 3.10+ is available. |
-| PowerShell refuses to run scripts | Use the provided `.cmd` launchers; they start PowerShell with process-scoped execution-policy settings. |
-| Browser asks to log in again | Run the interactive downloader step; a saved session may have expired. |
-| Files go to the wrong folder | Check `SyntyDownloader/config.yaml`: use `output_dir: ../SyntyLibrary` for the sibling library. The PowerShell `-OutputDir` parameter is now ignored. |
-| New pack does not appear in Dex | Run `rebuild_local_dex.cmd` or **Rebuild index**. |
-| No previews for some FBX files | Preview supports static mesh geometry only; not every FBX encoding, animation, or material is supported. |
-| Port `8765` already in use | Close the previous LocalDex process, or start `local_dex_server.py --port 8766`. |
-| Windows cannot open an asset | Check that its original download is still present in `SyntyLibrary/` and rebuild the index. |
-
-## 9. Testing and project notes
-
-Run the provided Python tests from the respective tool directories:
-
-```powershell
-cd .\SyntyDownloader
-.\.venv\Scripts\python.exe -m unittest discover -v
-
-cd ..\SyntyLocalDex
-py -3 -m unittest discover -s tests -v
-```
-
-The download automation depends on Shopify/Sky Pilot's current HTML and authentication behavior and may need maintenance if the site changes. LocalDex is an independent, offline file-derived index, not an authoritative registry of all Synty assets. Respect the licenses and terms applicable to downloaded packs.
+**Synty assets are excluded:** Downloaded packs and their contents are
+third-party material, not relicensed by this repository. Follow Synty
+Store's terms and the licenses accompanying each pack.
