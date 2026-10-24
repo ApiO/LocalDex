@@ -70,6 +70,84 @@ function initAutoLoadMore() {
   window.addEventListener('resize', checkAutoLoadMore, { passive: true });
 }
 
+// Drag the left edge of the right-hand inspector. The CSS grid takes the
+// panel width from --details-width, so the Assets list contracts naturally.
+let detailsWidth = null;
+let detailsResizePointer = null;
+function detailsWidthLimits() {
+  if (window.innerWidth <= 1160) {
+    return { min: Math.min(340, window.innerWidth), max: Math.min(680, window.innerWidth) };
+  }
+  const base = window.innerWidth <= 1430 ? 285 : 320;
+  return { min: base, max: base * 2 };
+}
+function updateDetailsResizeAria() {
+  const { min, max } = detailsWidthLimits();
+  const handle = $('details-resize-handle');
+  const current = detailsWidth === null ? min : Math.min(max, Math.max(min, detailsWidth));
+  handle.setAttribute('aria-valuemin', String(min));
+  handle.setAttribute('aria-valuemax', String(max));
+  handle.setAttribute('aria-valuenow', String(Math.round(current)));
+  handle.setAttribute('aria-valuetext', `${Math.round(current)} pixels wide`);
+}
+function setDetailsWidth(px) {
+  const { min, max } = detailsWidthLimits();
+  detailsWidth = Math.max(min, Math.min(max, Math.round(px)));
+  document.querySelector('.app-shell').style.setProperty('--details-width', `${detailsWidth}px`);
+  updateDetailsResizeAria();
+}
+function resetDetailsWidth() {
+  detailsWidth = null;
+  document.querySelector('.app-shell').style.removeProperty('--details-width');
+  updateDetailsResizeAria();
+}
+function initDetailsResize() {
+  const handle = $('details-resize-handle');
+  handle.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0 || $('details-panel').hidden) return;
+    ev.preventDefault();
+    const currentWidth = $('details-panel').getBoundingClientRect().width;
+    detailsResizePointer = { id: ev.pointerId, x: ev.clientX, width: currentWidth };
+    handle.setPointerCapture(ev.pointerId);
+    document.body.classList.add('details-resizing');
+  });
+  handle.addEventListener('pointermove', ev => {
+    if (!detailsResizePointer || detailsResizePointer.id !== ev.pointerId) return;
+    setDetailsWidth(detailsResizePointer.width + detailsResizePointer.x - ev.clientX);
+  });
+  function finishResize(ev) {
+    if (!detailsResizePointer || detailsResizePointer.id !== ev.pointerId) return;
+    detailsResizePointer = null;
+    document.body.classList.remove('details-resizing');
+    if (handle.hasPointerCapture(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
+  }
+  handle.addEventListener('pointerup', finishResize);
+  handle.addEventListener('pointercancel', finishResize);
+  handle.addEventListener('lostpointercapture', ev => {
+    if (detailsResizePointer?.id === ev.pointerId) {
+      detailsResizePointer = null;
+      document.body.classList.remove('details-resizing');
+    }
+  });
+  handle.addEventListener('dblclick', resetDetailsWidth);
+  handle.addEventListener('keydown', ev => {
+    const { min, max } = detailsWidthLimits();
+    let next;
+    if (ev.key === 'ArrowLeft') next = (detailsWidth ?? min) + 16;
+    else if (ev.key === 'ArrowRight') next = (detailsWidth ?? min) - 16;
+    else if (ev.key === 'Home') next = min;
+    else if (ev.key === 'End') next = max;
+    else return;
+    ev.preventDefault();
+    setDetailsWidth(next);
+  });
+  window.addEventListener('resize', () => {
+    if (detailsWidth !== null) setDetailsWidth(detailsWidth);
+    else updateDetailsResizeAria();
+  }, { passive: true });
+  updateDetailsResizeAria();
+}
+
 function applyTheme(theme, persist = false) {
   const next = theme === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
@@ -238,6 +316,7 @@ function applyPage(page, resetFilters = false) {
     };
     const [title, subtitle] = descriptions[page] || descriptions.overview;
     $('section-title').textContent = title; $('section-subtitle').textContent = subtitle;
+    updatePackPageTitle();
   }
   document.querySelectorAll('[data-page]').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   const showAssetFilters = isPack ? state.packTab === 'assets' : page === 'assets';
@@ -288,7 +367,15 @@ function filtersChanged() {
   for (const key of ['collection', 'kind', 'category', 'engine']) state[key] = $(`${key}-filter`).value;
   refresh();
 }
+// Show the selected collection name on the pack listing, regardless of whether
+// it was selected from the left sidebar or the collection filter dropdown.
+function updatePackPageTitle() {
+  if (state.page !== 'packs') return;
+  $('section-title').textContent = state.collection
+    ? `COLLECTION: ${state.collection}` : 'Browse asset packs';
+}
 function renderPacks() {
+  updatePackPageTitle();
   ++requestId;
   listingBusy = false;
   autoMoreBlocked = false;
@@ -665,6 +752,7 @@ function bind() {
   $('clear-filters').addEventListener('click', () => clearFilters());
   $('load-more').addEventListener('click', () => requestMore(false));
   initAutoLoadMore();
+  initDetailsResize();
   $('close-details').addEventListener('click', () => { viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; } $('details-panel').classList.remove('open'); });
   $('theme-toggle').addEventListener('click', toggleTheme);
   document.querySelectorAll('[data-job]').forEach(btn => btn.addEventListener('click', () => startConfigJob(btn.dataset.job)));

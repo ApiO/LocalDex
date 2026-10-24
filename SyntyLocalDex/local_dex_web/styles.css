@@ -501,3 +501,53 @@ video.inspector-media { width: 100%; }
 .brand-copy small{display:block;color:var(--muted);font-size:8px;letter-spacing:1.45px;margin-top:5px;font-weight:700}
 @media(max-width:1430px){.brand-logo{width:64px;height:64px;flex-basis:64px}}
 @media(max-width:800px){.brand{margin:0 0 14px;gap:10px}.brand-logo{width:54px;height:54px;flex-basis:54px}.brand-copy strong{font-size:18px}}
+
+/* Resizable Asset Details inspector. The desktop minimum is the former panel width,
+   and its maximum is exactly twice that width. */
+.app-shell.has-details {
+  grid-template-columns: 246px minmax(0, 1fr) var(--details-width, 320px);
+}
+.details-panel { min-width: 0; }
+.details-resize-handle {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  outline-offset: -3px;
+}
+.details-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 6px;
+  width: 3px;
+  border-radius: 4px;
+  background: transparent;
+  transition: background-color .12s;
+}
+.details-resize-handle:hover::before,
+.details-resize-handle:focus-visible::before,
+body.details-resizing .details-resize-handle::before {
+  background: var(--pink, #f24996);
+}
+body.details-resizing, body.details-resizing * { cursor: col-resize !important; }
+body.details-resizing { user-select: none; -webkit-user-select: none; }
+@media (max-width: 1430px) and (min-width: 1161px) {
+  .app-shell.has-details { grid-template-columns: 210px minmax(0, 1fr) var(--details-width, 285px); }
+}
+/* The inspector is an overlay at narrower widths. Keep its original minimum
+   (340px) and use the same resizing gesture when screen space permits. */
+@media (max-width: 1160px) {
+  .app-shell.has-details { grid-template-columns: 210px minmax(0, 1fr); }
+  .details-panel { width: min(100vw, var(--details-width, 340px)); }
+}
+@media (max-width: 800px) {
+  .app-shell, .app-shell.has-details { display: block; }
+}

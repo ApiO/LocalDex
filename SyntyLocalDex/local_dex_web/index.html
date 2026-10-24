@@ -178,9 +178,12 @@
   </div>
 
   <aside class="details-panel" id="details-panel" aria-label="Selection details" hidden>
+    <div id="details-resize-handle" class="details-resize-handle" role="separator" tabindex="0"
+         aria-label="Resize Asset details" aria-orientation="vertical"
+         aria-valuemin="320" aria-valuemax="640" aria-valuenow="320"
+         title="Drag to resize · Double-click to reset · Arrow keys to adjust"></div>
     <div class="details-heading"><div><span class="details-eyebrow">QUICK INSPECTOR</span><h3>Asset details</h3></div><button id="close-details" class="panel-close" title="Close details">×</button></div>
     <div id="details-body" class="details-empty"><div class="details-empty-icon">◇</div><strong>Nothing selected</strong><p>Choose a pack or an asset to see its source, location and details.</p></div>
-    <div class="details-bottom"><div class="details-lock">◎ &nbsp; Your files stay on your device</div></div>
   </aside>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
