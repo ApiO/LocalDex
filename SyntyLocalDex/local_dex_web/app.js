@@ -3,7 +3,7 @@
 const state = {
   catalog: null, token: '', page: 'overview', search: '', collection: '', kind: '',
   category: '', engine: '', pack: '', packTab: 'assets', currentPage: 1,
-  perPage: 48, total: 0, items: [], selected: null, busy: false
+  perPage: 48, total: 0, items: [], selected: null
 };
 const $ = id => document.getElementById(id);
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c =>
@@ -31,6 +31,59 @@ const imageExt = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const videoExt = new Set(['.mp4', '.webm']);
 const audioExt = new Set(['.mp3', '.wav', '.ogg']);
 let searchTimer, toastTimer, requestId = 0, viewerToken = 0, closeFbxViewer = null;
+let pendingAsset = null;
+const THEME_KEY = 'synty-local-dex-theme-v1';
+const AUTO_LOAD_MARGIN = 400;
+let listingBusy = false;
+let autoMoreBlocked = false;
+
+// Window scrolling drives pagination; the button remains a manual fallback.
+// Only asset lists (including the Assets / Downloaded files tabs inside a pack)
+// are paginated. Packs, Statistics, Configuration and Overview are not.
+function canLoadMore(auto = false) {
+  return state.catalog && (state.page === 'assets' || state.page === 'pack')
+    && !$('browse-view').hidden && !$('load-more').hidden
+    && !listingBusy && (!auto || !autoMoreBlocked)
+    && state.items.length < state.total;
+}
+function requestMore(auto = false) {
+  if (!canLoadMore(auto)) return;
+  if (!auto) autoMoreBlocked = false; // Manual retry after an error/empty page.
+  state.currentPage += 1;
+  refresh(true);
+}
+function checkAutoLoadMore() {
+  if (!canLoadMore(true)) return;
+  const rect = $('load-more').parentElement.getBoundingClientRect();
+  if (rect.top <= window.innerHeight + AUTO_LOAD_MARGIN && rect.bottom >= 0) requestMore(true);
+}
+function initAutoLoadMore() {
+  const marker = $('load-more').parentElement;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) requestMore(true);
+    }, { root: null, rootMargin: `0px 0px ${AUTO_LOAD_MARGIN}px 0px`, threshold: 0 })
+      .observe(marker);
+  } else {
+    window.addEventListener('scroll', checkAutoLoadMore, { passive: true });
+  }
+  window.addEventListener('resize', checkAutoLoadMore, { passive: true });
+}
+
+function applyTheme(theme, persist = false) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  $('theme-icon').textContent = next === 'light' ? '☾' : '☀';
+  $('theme-label').textContent = next === 'light' ? 'Dark theme' : 'Light theme';
+  $('theme-toggle').setAttribute('aria-label', `Switch to ${next === 'light' ? 'dark' : 'light'} theme`);
+  $('theme-toggle').setAttribute('aria-pressed', String(next === 'light'));
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, next); }
+    catch (_) { toast('Browser storage unavailable: theme will not persist.'); }
+  }
+}
+function toggleTheme() { applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true); }
+
 
 function toast(message) {
   const node = $('toast'); node.textContent = message; node.classList.add('show');
@@ -161,10 +214,16 @@ function applyPage(page, resetFilters = false) {
   if (resetFilters) clearFilters(false);
   const isPack = page === 'pack';
   const isStatistics = page === 'statistics';
-  // Invalidate any in-flight asset search when navigating to the statistics page.
-  if (isStatistics) ++requestId;
+  const isConfiguration = page === 'configuration';
+  const showDetails = page === 'assets';
+  $('details-panel').hidden = !showDetails;
+  document.querySelector('.app-shell').classList.toggle('has-details', showDetails);
+  if (!showDetails) $('details-panel').classList.remove('open');
+  // A pending asset search must never change a standalone page.
+  if (isStatistics || isConfiguration) ++requestId;
   $('statistics-view').hidden = !isStatistics;
-  $('browse-view').hidden = isStatistics;
+  $('configuration-view').hidden = !isConfiguration;
+  $('browse-view').hidden = isStatistics || isConfiguration;
   $('pack-detail').hidden = !isPack;
   $('section-top').hidden = isPack;
   if (isPack) {
@@ -175,24 +234,32 @@ function applyPage(page, resetFilters = false) {
       overview: ['Your asset packs', 'A home for everything you have downloaded.'],
       packs: ['Browse asset packs', 'Find a pack by collection, name or theme.'],
       assets: ['Asset explorer', 'Find individual models, prefabs, textures and files inside archives.'],
-      files: ['Downloaded files', 'Original archives and files stored in your library.'],
       statistics: ['Statistics', 'Packages, files, categories and disk usage.']
     };
     const [title, subtitle] = descriptions[page] || descriptions.overview;
     $('section-title').textContent = title; $('section-subtitle').textContent = subtitle;
   }
   document.querySelectorAll('[data-page]').forEach(el => el.classList.toggle('active', el.dataset.page === page));
-  const showAssetFilters = isPack ? state.packTab === 'assets' : (page === 'assets' || page === 'files');
+  const showAssetFilters = isPack ? state.packTab === 'assets' : page === 'assets';
   $('kind-filter').hidden = !showAssetFilters;
   $('category-filter').hidden = !showAssetFilters;
   $('engine-filter').hidden = !showAssetFilters;
   $('collection-filter').hidden = isPack;
   for (const key of ['collection', 'kind', 'category', 'engine']) $(`${key}-filter`).value = state[key];
   $('search-input').placeholder = isPack ? `Search within ${packById().name}...`
-    : page === 'assets' ? 'Search models, names, file paths...'
-      : page === 'files' ? 'Search downloaded file names...' : 'Search pack name, collection, theme...';
+    : page === 'assets' ? 'Search models, names, file paths...' : 'Search pack name, collection, theme...';
   renderSidebar();
-  if (!isStatistics) refresh();
+  if (isConfiguration) refreshConfiguration();
+  else if (!isStatistics) {
+    if (page === 'assets' && pendingAsset) {
+      // Clicking an asset inside a pack switches to the only page with an inspector.
+      const selected = pendingAsset;
+      pendingAsset = null;
+      state.search = selected.name;
+      $('search-input').value = selected.name;
+      refresh().then(() => { if (state.page === 'assets') showAssetDetails(selected); });
+    } else refresh();
+  }
 }
 function clearFilters(refreshNow = true) {
   for (const key of ['search', 'collection', 'kind', 'category', 'engine']) state[key] = '';
@@ -207,7 +274,7 @@ function navigate(page, id = '') {
 function routeFromHash() {
   if (!state.catalog) return;
   const route = location.hash.match(/^#\/pack\/([0-9a-f]{24})$/i);
-  const page = route ? 'pack' : ['overview', 'packs', 'assets', 'files', 'statistics']
+  const page = route ? 'pack' : ['overview', 'packs', 'assets', 'statistics', 'configuration']
     .includes(location.hash.slice(2)) ? location.hash.slice(2) : 'overview';
   const newPack = route ? route[1] : '';
   if (page !== state.page || newPack !== state.pack) {
@@ -223,6 +290,8 @@ function filtersChanged() {
 }
 function renderPacks() {
   ++requestId;
+  listingBusy = false;
+  autoMoreBlocked = false;
   const words = state.search.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const packs = state.catalog.packs.filter(p => (!state.collection || p.collection === state.collection)
     && words.every(w => [p.name, p.collection, p.theme].join(' ').toLowerCase().includes(w)));
@@ -237,10 +306,13 @@ function renderPacks() {
 async function refresh(more = false) {
   if (state.page === 'overview' || state.page === 'packs') return renderPacks();
   const id = ++requestId;
+  listingBusy = true;
   const view = state.page === 'pack' ? state.packTab : state.page;
   $('filter-note').textContent = state.page === 'pack' ? '· This pack only' : '';
   if (!more) {
     state.currentPage = 1; state.items = [];
+    autoMoreBlocked = false;
+    $('load-more').hidden = true;
     $('results').innerHTML = '<div class="loading">Searching the local index…</div>';
   }
   const params = new URLSearchParams({ view, q: state.search, collection: state.collection,
@@ -249,24 +321,64 @@ async function refresh(more = false) {
   try {
     const result = await api('/api/search?' + params);
     if (id !== requestId) return;
+    const nextItems = Array.isArray(result.items) ? result.items : [];
     state.total = result.total;
-    state.items = more ? state.items.concat(result.items) : result.items;
+    if (more) {
+      if (nextItems.length) {
+        state.items.push(...nextItems);
+        // Append rather than re-render all cards: preserves existing thumbnails,
+        // scroll position and any previews already loaded in the grid.
+        $('results').insertAdjacentHTML('beforeend', nextItems.map(assetCard).join(''));
+      } else {
+        // Do not hammer a backend returning an empty page with more expected.
+        state.currentPage -= 1;
+        autoMoreBlocked = true;
+      }
+    } else {
+      state.items = nextItems;
+      $('results').className = 'pack-grid';
+      $('results').innerHTML = state.items.length ? state.items.map(assetCard).join('')
+        : '<div class="empty"><div class="empty-symbol">◇</div><strong>Nothing found</strong><p>Try another name, format, or category.</p></div>';
+    }
     $('result-count').textContent = prettyNum(result.total);
     $('result-label').textContent = view === 'files' ? 'downloaded files' : 'assets found';
-    $('results').className = 'pack-grid';
-    $('results').innerHTML = state.items.length ? state.items.map(assetCard).join('')
-      : '<div class="empty"><div class="empty-symbol">◇</div><strong>Nothing found</strong><p>Try another name, format, or category.</p></div>';
-    $('load-more').hidden = state.items.length >= state.total;
+    $('load-more').hidden = state.items.length >= state.total || !state.items.length;
     $('load-more').textContent = `Load more (${prettyNum(state.items.length)} / ${prettyNum(state.total)}) ↓`;
   } catch (err) {
     if (id !== requestId) return;
-    $('results').innerHTML = `<div class="empty"><strong>Search unavailable</strong><p>${escapeHtml(err.message)}</p></div>`;
+    if (more) {
+      state.currentPage -= 1;
+      autoMoreBlocked = true;
+      toast('Could not load more: ' + err.message);
+    } else {
+      $('results').innerHTML = `<div class="empty"><strong>Search unavailable</strong><p>${escapeHtml(err.message)}</p></div>`;
+      $('load-more').hidden = true;
+    }
+  } finally {
+    if (id === requestId) {
+      listingBusy = false;
+      // Also handles short result pages when the marker stays visible:
+      // IntersectionObserver might not emit a second intersection event.
+      requestAnimationFrame(checkAutoLoadMore);
+    }
   }
 }
-function openPanel() { $('details-panel').classList.add('open'); }
+function openPanel() {
+  if (state.page === 'assets') $('details-panel').classList.add('open');
+}
 function selectAsset(id) {
   const a = state.items.find(x => x.id === id);
   if (!a) return;
+  if (state.page !== 'assets') {
+    pendingAsset = a;
+    navigate('assets');
+    return;
+  }
+  showAssetDetails(a);
+}
+function showAssetDetails(a) {
+  if (state.page !== 'assets') return;
+  const id = a.id;
   viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; }
   state.selected = { type: 'asset', id }; openPanel();
   const locationText = a.inner_path ? `${a.source_rel} :: ${a.inner_path}` : a.source_rel;
@@ -400,24 +512,103 @@ async function startObjPreview(a, token) {
   }
 }
 
-async function reindex() {
-  if (state.busy) return;
-  state.busy = true;
-  $('sidebar-index-btn').disabled = true;
-  $('sidebar-index-btn').textContent = 'Indexing…';
-  toast('Rebuilding index. Large Unity packages can take some time.');
-  try {
-    const result = await post('/api/reindex', { deep_unity: true });
-    state.catalog = await api('/api/catalog');
-    renderStats(); renderSidebar(); state.selected = null; applyPage(state.page);
-    toast(`Index refreshed: ${prettyNum(result.stats.assets)} assets available`);
-  } catch (err) { toast('Indexing error: ' + err.message); }
-  finally {
-    state.busy = false;
-    $('sidebar-index-btn').disabled = false;
-    $('sidebar-index-btn').textContent = '↻   Rebuild index';
+// Configuration operations always run locally via the Dex server, not in the browser.
+let configFetching = false;
+let configLastAssetEnd = null;
+const operationNames = { install: 'Installation', downloads: 'Downloads sync', assets: 'Asset indexing' };
+const stateLabels = { never: 'Not run', running: 'Running', waiting_input: 'Waiting for login',
+  success: 'Success', failed: 'Failed', interrupted: 'Interrupted' };
+function configDate(value) {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
+function renderConfiguration(data) {
+  const r = data.readiness;
+  $('config-ready-dot').className = 'config-dot ' + (r.ready ? 'ready' : 'not-ready');
+  $('config-ready-title').textContent = r.ready ? 'Downloader installed and ready' : 'Downloader requires setup';
+  const missing = [];
+  if (!r.downloader_found) missing.push('Downloader script missing');
+  if (!r.python_installed) missing.push('Python environment missing');
+  else if (!r.dependencies_ok) missing.push('Python dependencies missing');
+  if (r.dependencies_ok && !r.chromium_installed) missing.push('Chromium missing');
+  if (!r.config_exists) missing.push('config.yaml missing');
+  else if (!r.config_valid) missing.push('Invalid configuration');
+  else if (!r.library_matches) missing.push('Library path mismatch');
+  else if (!r.credentials_configured) missing.push('Login email is not configured');
+  $('config-ready-detail').textContent = r.ready ? 'Python, Playwright, Chromium and configuration validated.'
+    : (r.error || missing.join(' · ') || 'Verify the local installation.');
+  $('config-downloader-path').textContent = r.downloader_dir;
+  $('config-library-path').textContent = r.library_dir;
+  $('config-file-path').textContent = r.config_path;
+  for (const action of ['install', 'downloads', 'assets']) {
+    const entry = data.history[action];
+    const badge = $(`${action}-state`);
+    badge.textContent = stateLabels[entry.state] || entry.state;
+    badge.className = `config-badge state-${entry.state}`;
+    const observed = !entry.started_at && data.observed?.[action];
+    $(`${action}-last`).textContent = observed ? `Last file activity: ${configDate(observed)} (result unknown)` :
+      `Last run: ${configDate(entry.started_at)}` +
+      (entry.finished_at ? ` · Ended: ${configDate(entry.finished_at)}` : '');
+    const btn = document.querySelector(`[data-job="${action}"]`);
+    btn.disabled = !!data.active || (action === 'downloads' && !r.ready) ||
+      (action === 'install' && !r.installer_found);
+  }
+  $('config-current').textContent = data.active ? `${operationNames[data.active]} in progress` :
+    'No operation in progress.';
+  const auth = $('config-auth');
+  auth.hidden = data.active !== 'downloads' || !data.input_stage;
+  if (!auth.hidden) {
+    const code = data.input_stage === 'code';
+    $('config-auth-message').textContent = code ? 'Enter the verification code received by email' :
+      'Finish authentication in Chromium, then continue';
+    $('config-code').hidden = !code;
+    $('config-send-code').textContent = code ? 'Submit code' : 'Continue';
+    $('config-auth-help').textContent = code ?
+      'Or leave the code blank if you enter it directly in Chromium.' :
+      'Only continue after the Synty login is complete.';
+  }
+  const log = $('config-log');
+  const pinned = log.scrollHeight - log.clientHeight - log.scrollTop < 35;
+  const output = [...(data.log || [])];
+  if (data.partial && data.partial.trim()) output.push(data.partial);
+  log.textContent = output.length ? output.join('\n') : 'No recent operations in this session.';
+  if (pinned) log.scrollTop = log.scrollHeight;
+  const asset = data.history.assets;
+  if (asset.state === 'success' && asset.finished_at && configLastAssetEnd !== asset.finished_at) {
+    configLastAssetEnd = asset.finished_at;
+    api('/api/catalog').then(catalog => {
+      state.catalog = catalog;
+      renderStats(); renderSidebar();
+    }).catch(err => toast('Catalog reload failed: ' + err.message));
   }
 }
+async function refreshConfiguration(force = false) {
+  if (state.page !== 'configuration' || configFetching) return;
+  configFetching = true;
+  try {
+    renderConfiguration(await api('/api/configuration' + (force === true ? '?refresh=1' : '')));
+  } catch (err) {
+    $('config-ready-detail').textContent = 'Status unavailable: ' + err.message;
+  } finally { configFetching = false; }
+}
+async function startConfigJob(action) {
+  try {
+    const headless = action === 'downloads' && $('download-headless').checked;
+    await post('/api/configuration/start', { action, headless });
+    toast(`${operationNames[action]} started`);
+    await refreshConfiguration();
+  } catch (err) { toast('Cannot start: ' + err.message); }
+}
+async function replyConfigPrompt() {
+  const value = $('config-code').hidden ? '' : $('config-code').value.trim();
+  try {
+    await post('/api/configuration/reply', { code: value });
+    $('config-code').value = '';
+    await refreshConfiguration();
+  } catch (err) { toast(err.message); }
+}
+
 function bind() {
   document.body.addEventListener('click', async ev => {
     const button = ev.target.closest('[data-action]');
@@ -472,9 +663,19 @@ function bind() {
   });
   ['collection-filter', 'kind-filter', 'category-filter', 'engine-filter'].forEach(id => $(id).addEventListener('change', filtersChanged));
   $('clear-filters').addEventListener('click', () => clearFilters());
-  $('load-more').addEventListener('click', () => { state.currentPage++; refresh(true); });
+  $('load-more').addEventListener('click', () => requestMore(false));
+  initAutoLoadMore();
   $('close-details').addEventListener('click', () => { viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; } $('details-panel').classList.remove('open'); });
-  $('sidebar-index-btn').addEventListener('click', reindex);
+  $('theme-toggle').addEventListener('click', toggleTheme);
+  document.querySelectorAll('[data-job]').forEach(btn => btn.addEventListener('click', () => startConfigJob(btn.dataset.job)));
+  $('config-send-code').addEventListener('click', replyConfigPrompt);
+  $('config-code').addEventListener('keydown', ev => { if (ev.key === 'Enter') replyConfigPrompt(); });
+  $('config-recheck').addEventListener('click', () => refreshConfiguration(true));
+  $('config-edit').addEventListener('click', async () => {
+    try { await post('/api/configuration/open-file', {}); toast('Configuration opened in the text editor'); }
+    catch (err) { toast(err.message); }
+  });
+  window.setInterval(refreshConfiguration, 2400);
   window.addEventListener('hashchange', routeFromHash);
   document.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { viewerToken++; if (closeFbxViewer) { closeFbxViewer(); closeFbxViewer = null; } $('details-panel').classList.remove('open'); }
@@ -484,6 +685,7 @@ function bind() {
   });
 }
 async function boot() {
+  applyTheme(document.documentElement.dataset.theme);
   bind();
   try {
     const [catalog, session] = await Promise.all([api('/api/catalog'), api('/api/session')]);

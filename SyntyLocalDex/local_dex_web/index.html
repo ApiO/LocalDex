@@ -3,8 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
+  <script>
+    // Apply the saved theme before the stylesheet to avoid flashing the wrong theme.
+    (() => {
+      let theme = 'dark';
+      try {
+        const saved = localStorage.getItem('synty-local-dex-theme-v1');
+        if (saved === 'light') theme = 'light';
+      } catch (_) { /* Continue with the dark default when storage is unavailable. */ }
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
   <title>Local Dex | Your Synty Library</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
@@ -12,24 +26,27 @@
 <div class="app-shell">
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="Local Dex home">
-      <div class="brand-mark"><span>LD</span></div>
-      <div><strong>LOCAL<span>DEX</span></strong><small>SYNTY ASSET LIBRARY</small></div>
+      <img class="brand-logo" src="/logo.png" alt="Local Dex logo">
+      <div class="brand-copy"><strong>LOCAL<span>DEX</span></strong><small>SYNTY ASSET LIBRARY</small></div>
     </a>
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="nav-list" aria-label="Browse">
       <button class="nav-link active" data-page="overview"><span class="nav-icon">◫</span> Overview</button>
       <button class="nav-link" data-page="packs"><span class="nav-icon">▦</span> Asset packs <span id="side-pack-count" class="nav-count">—</span></button>
       <button class="nav-link" data-page="assets"><span class="nav-icon">◇</span> Assets <span id="side-asset-count" class="nav-count">—</span></button>
-      <button class="nav-link" data-page="files"><span class="nav-icon">≡</span> Download files</button>
       <button class="nav-link" data-page="statistics"><span class="nav-icon">▥</span> Statistics</button>
+      <button class="nav-link" data-page="configuration"><span class="nav-icon">⚙</span> Configuration</button>
     </nav>
     <div class="sidebar-label sidebar-label-second">COLLECTIONS</div>
     <nav id="sidebar-collections" class="nav-list" aria-label="Collections"></nav>
     <div class="sidebar-bottom">
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to light theme" aria-pressed="false">
+        <span id="theme-icon" class="theme-icon" aria-hidden="true">☀</span>
+        <span id="theme-label">Light theme</span>
+      </button>
       <div class="offline-pill"><span class="status-dot"></span> 100% LOCAL · PRIVATE</div>
       <span id="index-date" class="sidebar-index-date">Not indexed</span>
       <div class="sidebar-note">This browser uses only the assets stored on your computer. No cloud service or account required.</div>
-      <button id="sidebar-index-btn" class="sidebar-action">↻ &nbsp; Rebuild index</button>
     </div>
   </aside>
 
@@ -66,6 +83,59 @@
             <div id="stats-largest" class="stats-rows"></div>
           </section>
         </div>
+      </section>
+
+      <section id="configuration-view" class="configuration-view" hidden aria-label="Local Dex configuration">
+        <div class="section-top config-heading">
+          <div><div class="eyebrow">LOCAL WORKSPACE</div><h2>Configuration</h2>
+            <p>Install the downloader, synchronize your downloads and refresh the searchable asset catalog.</p></div>
+        </div>
+        <div class="config-readiness" role="status">
+          <div class="config-readiness-main"><span id="config-ready-dot" class="config-dot"></span>
+            <div><strong id="config-ready-title">Checking installation…</strong>
+            <p id="config-ready-detail">Inspecting local files and dependencies.</p></div></div>
+          <button type="button" class="btn btn-outline" id="config-recheck">Check again</button>
+        </div>
+        <div class="config-paths">
+          <div><span>Downloader folder</span><code id="config-downloader-path">—</code></div>
+          <div><span>Library folder</span><code id="config-library-path">—</code></div>
+          <div><span>Configuration</span><code id="config-file-path">—</code>
+            <button type="button" class="config-text-action" id="config-edit">Open config.yaml</button></div>
+        </div>
+        <div class="config-actions">
+          <section class="config-action">
+            <div class="config-action-heading"><span class="config-action-symbol">01</span><div><h3>Downloader installation</h3>
+              <p>Install or repair Python, project packages and Playwright Chromium.</p></div></div>
+            <div class="config-status-line"><span id="install-state" class="config-badge">Not run</span>
+              <span id="install-last">Last run: never</span></div>
+            <button type="button" class="btn btn-outline config-run" data-job="install">Install / Repair</button>
+          </section>
+          <section class="config-action">
+            <div class="config-action-heading"><span class="config-action-symbol">02</span><div><h3>Download synchronization</h3>
+              <p>Download missing package files using SyntyDownloader and config.yaml. No existing downloads are deleted.</p></div></div>
+            <div class="config-status-line"><span id="downloads-state" class="config-badge">Not run</span>
+              <span id="downloads-last">Last run: never</span></div>
+            <label class="config-check"><input type="checkbox" id="download-headless"> Headless mode (existing login session required)</label>
+            <button type="button" class="btn btn-primary config-run" data-job="downloads">Sync downloads</button>
+          </section>
+          <section class="config-action">
+            <div class="config-action-heading"><span class="config-action-symbol">03</span><div><h3>Asset catalog synchronization</h3>
+              <p>Reindex downloaded packages, previews, archive contents and local search data.</p></div></div>
+            <div class="config-status-line"><span id="assets-state" class="config-badge">Not run</span>
+              <span id="assets-last">Last run: never</span></div>
+            <button type="button" class="btn btn-outline config-run" data-job="assets">Sync assets / Rebuild index</button>
+          </section>
+        </div>
+        <section class="config-monitor" aria-label="Operation monitor">
+          <div class="config-monitor-heading"><div><h3>Operation monitor</h3><p id="config-current">No operation in progress.</p></div></div>
+          <div id="config-auth" class="config-auth" hidden>
+            <label for="config-code" id="config-auth-message">Enter the code received by email</label>
+            <div class="config-auth-input"><input type="text" id="config-code" inputmode="numeric" autocomplete="one-time-code" placeholder="Email verification code" maxlength="12">
+              <button type="button" id="config-send-code" class="btn btn-primary">Submit code</button></div>
+            <p id="config-auth-help">You can also complete sign-in in the Chromium window, then submit an empty code.</p>
+          </div>
+          <pre id="config-log" class="config-log" aria-live="polite">No recent operations in this session.</pre>
+        </section>
       </section>
 
       <div id="browse-view">
@@ -107,7 +177,7 @@
     </main>
   </div>
 
-  <aside class="details-panel" id="details-panel" aria-label="Selection details">
+  <aside class="details-panel" id="details-panel" aria-label="Selection details" hidden>
     <div class="details-heading"><div><span class="details-eyebrow">QUICK INSPECTOR</span><h3>Asset details</h3></div><button id="close-details" class="panel-close" title="Close details">×</button></div>
     <div id="details-body" class="details-empty"><div class="details-empty-icon">◇</div><strong>Nothing selected</strong><p>Choose a pack or an asset to see its source, location and details.</p></div>
     <div class="details-bottom"><div class="details-lock">◎ &nbsp; Your files stay on your device</div></div>

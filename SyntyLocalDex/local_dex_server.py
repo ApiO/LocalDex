@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 from build_local_dex import (DEFAULT_LIBRARY, DEFAULT_INDEX_DIR, VIEWABLE_ASSETS_SQL,
                              build, connect_db)
 from fbx_geometry import FBXPreviewError, MAX_FBX_BYTES, parse_fbx_geometry, thumbnail_svg
+from dex_operations import DexOperations, JobError
 
 WEB_DIR = Path(__file__).resolve().parent / 'local_dex_web'
 MAX_BODY = 4096
@@ -95,6 +96,8 @@ class LocalDexHandler(BaseHTTPRequestHandler):
         try:
             if path == '/api/catalog':
                 return self.json_response(self.load_manifest())
+            if path == '/api/configuration':
+                return self.json_response(self.server.operations.snapshot(force=parse_qs(url.query).get('refresh') == ['1']))
             if path == '/api/session':
                 return self.json_response({'token': self.server.token})
             if path == '/api/search':
@@ -113,6 +116,15 @@ class LocalDexHandler(BaseHTTPRequestHandler):
             if path in ('/styles.css', '/app.js', '/fbx_viewer.js'):
                 f = WEB_DIR / path[1:]
                 return self.respond(200, f.read_bytes(), 'text/css; charset=utf-8' if path.endswith('.css') else 'text/javascript; charset=utf-8', 'no-cache')
+            # Branding files are deliberately allowlisted; do not serve arbitrary local paths.
+            brand_media = {
+                '/logo.png': 'image/png',
+                '/favicon.png': 'image/png',
+                '/favicon.ico': 'image/x-icon',
+            }
+            if path in brand_media:
+                f = WEB_DIR / path[1:]
+                return self.respond(200, f.read_bytes(), brand_media[path], 'no-cache')
             return self.error_json(404, 'Not found')
         except (sqlite3.Error, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as ex:
             return self.error_json(500, str(ex))
@@ -329,7 +341,24 @@ class LocalDexHandler(BaseHTTPRequestHandler):
                 return self.error_json(413, 'Invalid request size')
             data = json.loads(self.rfile.read(size)) if size else {}
             path = urlsplit(self.path).path
+            if path == '/api/configuration/start':
+                action = data.get('action')
+                if action not in ('install', 'downloads', 'assets'):
+                    return self.error_json(400, 'Unknown operation')
+                self.server.operations.start(action, headless=data.get('headless') is True)
+                return self.json_response({'ok': True, 'action': action}, 202)
+            if path == '/api/configuration/reply':
+                reply = data.get('code', '')
+                if not isinstance(reply, str) or len(reply) > 20:
+                    return self.error_json(400, 'Invalid authentication input')
+                self.server.operations.reply(reply)
+                return self.json_response({'ok': True})
+            if path == '/api/configuration/open-file':
+                self.server.operations.open_config()
+                return self.json_response({'ok': True})
             if path == '/api/reindex':
+                if self.server.operations.active:
+                    return self.error_json(409, 'Another operation is running')
                 if not self.server.index_lock.acquire(blocking=False):
                     return self.error_json(409, 'Indexing already in progress')
                 try:
@@ -368,6 +397,8 @@ class LocalDexHandler(BaseHTTPRequestHandler):
                     subprocess.Popen(['xdg-open', str(folder)])
                 return self.json_response({'ok': True})
             return self.error_json(404, 'Not found')
+        except JobError as ex:
+            return self.error_json(409, str(ex))
         except (ValueError, KeyError, OSError, sqlite3.Error, json.JSONDecodeError) as ex:
             return self.error_json(500, str(ex))
 
@@ -381,6 +412,7 @@ class LocalDexServer(ThreadingHTTPServer):
         self.index_dir = (Path(index_dir) if index_dir is not None else DEFAULT_INDEX_DIR).expanduser().resolve()
         self.token = secrets.token_urlsafe(32)
         self.index_lock = threading.Lock()
+        self.operations = DexOperations(WEB_DIR.parent, self.root, self.index_dir, build, self.index_lock)
 
 
 def main() -> int:
@@ -395,8 +427,12 @@ def main() -> int:
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     if not root.is_dir():
-        print(f'Library not found: {root}', file=sys.stderr)
-        return 1
+        if root == DEFAULT_LIBRARY.resolve() and not root.exists():
+            # A fresh checkout can open Configuration before the first download.
+            root.mkdir(parents=True, exist_ok=True)
+        else:
+            print(f'Library not found: {root}', file=sys.stderr)
+            return 1
     index_dir = args.index_dir.expanduser().resolve()
     if index_dir == root or index_dir.is_relative_to(root):
         print('Index folder must be outside SyntyLibrary', file=sys.stderr)

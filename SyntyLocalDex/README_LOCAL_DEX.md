@@ -107,3 +107,49 @@ FBX files are supported in the inspector as **interactive shaded 3D static mesh 
 The lightweight bundled FBX geometry reader handles common binary FBX 7.x and ASCII FBX 7.x mesh data. A shaded Canvas renderer is used when WebGL is unavailable. It does **not** recreate source materials/textures, scene node transforms, rigging or skeleton/keyframe animation. Some older or nonstandard FBX exports and animation-only FBX files cannot produce a mesh preview. A clear error is shown instead. Large previews are capped (96 MB uncompressed, 180k vertices and 125k triangles); oversized or complex files may be refused or simplified. No cloud services, external JavaScript libraries, Blender or new pip packages are required.
 
 **Installation:** Exit the running Dex server and extract the changed-files-only update over your `SyntyLocalDex` directory. Relaunch `open_local_dex.cmd`. A catalog rebuild is not required just for this UI/preview update, since FBX entries were already indexed. Rebuild if you added downloads in the meantime.
+
+## Configuration page (new)
+
+Open **Configuration** from the left sidebar (`#/configuration`). This is a
+localhost-only operations dashboard for the three sibling folders. The action
+buttons are handled by Local Dex's Python server, not by a remote service.
+
+1. **Install / Repair** uses the existing sibling
+   `SyntyDownloader/install_synty_sync.ps1` installer (Windows only). It installs
+   or repairs Python dependencies and the Playwright Chromium browser; it does
+   not replace downloader source files. The installer may need an internet
+   connection for dependencies.
+2. **Open config.yaml** opens your private downloader YAML configuration in
+   Notepad (creating a local copy of `config.example.yaml` if missing). Use
+   `output_dir: ../SyntyLibrary` and configure your actual Synty email and
+   customer ID. The UI checks for Python, dependencies, Chromium, config.yaml,
+   and a library path matching the sibling Local Dex library. Credentials are
+   not exposed through the status endpoint.
+3. **Sync downloads** runs `synty_sync.py --config config.yaml` in the
+   downloader's `.venv`, downloading only missing files. The first run opens
+   Chromium if needed; enter the emailed verification code on the Configuration
+   page, or enter it directly in Chromium and confirm in the page. The optional
+   **Headless** checkbox requires a valid previously authenticated browser
+   session; it will fail if authentication needs refreshing.
+4. **Sync assets / Rebuild index** runs the incremental Local Dex indexer. Run
+   this after downloads to refresh searchable assets and pack statistics.
+   It indexes locally; it does not alter downloaded archives.
+
+Each action has a running/success/error state, start and finish timestamps, and
+an in-session output log. Run history is stored at
+`SyntyLocalDex/.localdex/operations.json`. On first launch, the UI also shows
+last-known log/catalog file timestamps when available; these are observations,
+not a guarantee that an external command succeeded. Only one operation can run
+at a time, and the existing sidebar **Rebuild index** button remains available.
+
+**Security:** The server listens on `127.0.0.1` only and uses origin and session
+checks for POST operations. No arbitrary commands can be supplied from the UI.
+Email verification codes are sent only to the local downloader process and are
+not saved by the Local Dex operations history. Protect `config.yaml`, your
+Playwright browser profile, and the local Dex server while it is running.
+
+**Prerequisite:** Local Dex itself needs Python 3.10+ in order to start; if no
+Python is installed yet, use `SyntyDownloader/install_synty_sync.cmd` once
+before launching `open_local_dex.cmd`. The installer still validates
+`config.yaml`, so set up the YAML before running it. The new configuration page
+has not yet been verified with a live Synty account or on a Windows system.
