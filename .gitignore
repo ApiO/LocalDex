@@ -52,8 +52,10 @@ SyntyDownloader/user_data/
 *.db-shm
 *.db-journal
 
-# Downloader account credentials and local output directory.
-# config.example.yaml remains tracked as documentation.
+# Private account configuration is at the repository root.
+# Keep the legacy downloader-path ignored for users who have not migrated yet.
+/config.yaml
+/config.yaml.migration-tmp
 /SyntyDownloader/config.yaml
 
 # Local configuration and secrets (templates can still be committed)

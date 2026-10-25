@@ -6,6 +6,7 @@ explicitly requested via the downloader's own public CLI.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -34,7 +35,10 @@ class DexOperations:
     def __init__(self, dex_dir: Path, library: Path, index_dir: Path,
                  build_index: Callable, index_lock: threading.Lock):
         self.dex_dir = Path(dex_dir).resolve()
-        self.downloader = self.dex_dir.parent / 'SyntyDownloader'
+        self.project_root = self.dex_dir.parent
+        self.downloader = self.project_root / 'SyntyDownloader'
+        self.config_path = self.project_root / 'config.yaml'
+        self.config_example_path = self.project_root / 'config.example.yaml'
         self.library = Path(library).resolve()
         self.index_dir = Path(index_dir).resolve()
         self.build_index = build_index
@@ -83,7 +87,7 @@ class DexOperations:
         with self.lock:
             if not force and self._ready_cache and time.monotonic() - self._ready_cache[0] < 12:
                 return dict(self._ready_cache[1])
-        config = self.downloader / 'config.yaml'
+        config = self.config_path
         installer = self.downloader / 'install_synty_sync.ps1'
         script = self.downloader / 'synty_sync.py'
         data = {'downloader_found': script.is_file(), 'installer_found': installer.is_file(),
@@ -185,11 +189,40 @@ class DexOperations:
             with self.lock:
                 self.lines.append(message[-900:])
 
+    @staticmethod
+    def _powershell_utf8_command(script: Path) -> list[str]:
+        """Force UTF-8 output from Windows PowerShell 5.1 (normally an OEM code page).
+
+        -EncodedCommand passes a UTF-16LE script, avoiding quoting and path issues.
+        The installer itself is unchanged and retains its usual exit status.
+        """
+        escaped = str(script).replace("'", "''")
+        command = (
+            "$ErrorActionPreference = 'Stop'; "
+            "$utf8 = [System.Text.UTF8Encoding]::new($false); "
+            "[Console]::OutputEncoding = $utf8; "
+            "$OutputEncoding = $utf8; "
+            f"& '{escaped}'; "
+            "if ($LASTEXITCODE -is [int]) { exit $LASTEXITCODE }; "
+            "exit 0"
+        )
+        encoded = base64.b64encode(command.encode('utf-16le')).decode('ascii')
+        return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-EncodedCommand', encoded]
+
     def _execute(self, args: list[str], cwd: Path, interactive: bool = False) -> int:
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) if not interactive else 0
+        # On Windows, a Python process with redirected stdout may default to
+        # cp1252, while PowerShell may default to cp850. Local Dex's reader and
+        # its JSON/HTTP response are UTF-8, so child processes must also emit
+        # UTF-8. Without this, `Déjà présent` becomes `D�j� pr�sent`.
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8:replace'
+        env['PYTHONUTF8'] = '1'
         proc = subprocess.Popen(args, cwd=str(cwd), stdin=subprocess.PIPE if interactive else subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                encoding='utf-8', errors='replace', bufsize=1, creationflags=creationflags)
+                                encoding='utf-8', errors='replace', bufsize=1,
+                                creationflags=creationflags, env=env)
         with self.lock:
             self.proc = proc
         buffer = ''
@@ -270,12 +303,12 @@ class DexOperations:
                     self.index_lock.release()
             elif action == 'install':
                 self._log('Installing Python dependencies and Playwright using the existing Windows installer...')
-                return_code = self._execute(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                     '-File', str(self.downloader / 'install_synty_sync.ps1')], self.downloader)
+                return_code = self._execute(self._powershell_utf8_command(
+                    self.downloader / 'install_synty_sync.ps1'), self.downloader)
             else:
                 self._log('Starting download sync with stored configuration. Browser opens if headless is disabled.')
                 argv = [str(self.python), '-u', str(self.downloader / 'synty_sync.py'),
-                        '--config', str(self.downloader / 'config.yaml')]
+                        '--config', str(self.config_path)]
                 if headless:
                     argv.append('--headless')
                 return_code = self._execute(argv, self.downloader, interactive=not headless)
@@ -298,9 +331,9 @@ class DexOperations:
     def open_config(self) -> None:
         if os.name != 'nt':
             raise JobError('Open config.yaml with your local editor')
-        file = self.downloader / 'config.yaml'
+        file = self.config_path
         if not file.exists():
-            example = self.downloader / 'config.example.yaml'
+            example = self.config_example_path
             if not example.is_file():
                 raise JobError('config.example.yaml not found')
             shutil.copy2(example, file)

@@ -1,27 +1,42 @@
-# Installation automatique Synty Sync (Windows 11)
+# Synty Downloader — Windows installation
 
-## Installation en deux clics
+Prefer the [repository root README](../README.md) for the recommended **Web UI workflow**.
 
-1. Décompresser **entièrement** `synty_sync_windows.zip` dans un dossier, par exemple `C:\Tools\SyntySync`.
-2. Double-cliquer sur `install_synty_sync.cmd`.
-3. L'installateur vérifie Python (version 3.10 minimum), installe Python 3.13 via `winget` **si Python est absent ou trop ancien**, crée un environnement Python local `.venv`, installe les dépendances et installe Chromium pour Playwright.
-4. Ouvrir `synty_sync.py` et remplacer `USERNAME = "toto"` par l'e-mail Synty utilisé pour la connexion. Le script demandera le code reçu par e-mail si nécessaire.
-5. Double-cliquer sur `run_synty_sync.cmd` : première connexion interactive sur un package, puis synchronisation intégrale en headless.
+## Setup
 
-Les fichiers téléchargés vont dans `D:\SyntyLibrary` par défaut (modifiable via la variable `$OutputDir` de `run_synty_sync.ps1`, ou via `run_synty_sync.cmd` en lui passant `-OutputDir "E:\SyntyLibrary"` depuis `cmd`).
+1. Run **`../install.cmd`** from the repository root. It detects or installs Python 3.10+, creates `SyntyDownloader/.venv` and installs Python packages plus Playwright Chromium.
+2. Run **`../launch_localdex.cmd`** to open the browser at `http://127.0.0.1:8765`.
+3. On the **Configuration** page, select **Open config.yaml** and enter your Synty Store email and `customer_id`.
+4. Run **Sync downloads** and **Sync assets / Rebuild index** from the same page.
 
-## Sécurité PowerShell
+On first launch, the root launchers create `../config.yaml` from `../config.example.yaml` if missing, or safely migrate a legacy `SyntyDownloader/config.yaml` to the root. For the standard sibling layout, configure:
 
-Les fichiers `.cmd` lancent leur propre processus PowerShell avec `-ExecutionPolicy Bypass`. **Aucune modification permanente de la stratégie d'exécution du système n'est effectuée.** Aucune élévation administrateur n'est normalement nécessaire. Une stratégie d'entreprise appliquée par GPO peut toutefois continuer à bloquer l'exécution.
+```yaml
+output_dir: SyntyLibrary
+login:
+  email: "your-email@example.com"
+  password: ""
+  customer_id: "1234567890123"
+```
 
-On n'utilise pas `Activate.ps1` de `.venv` ; l'interpréteur Python est lancé directement, ce qui évite le blocage PowerShell sur les environnements virtuels.
+Find your numeric customer ID in the Synty Store **My downloads** URL: `.../apps/downloads/orders/<customer_id>`. Do not use the full URL.
 
-## En cas de problème
+## Standalone commands
 
-- Si `winget` est indisponible : installer l'application « App Installer » de Microsoft ou Python 3.13 depuis python.org, puis relancer l'installateur.
-- Si Python vient d'être installé mais n'est pas trouvé : rouvrir une session Windows, puis relancer `install_synty_sync.cmd`.
-- Si la destination `D:` n'existe pas : modifier `$OutputDir` dans `run_synty_sync.ps1`.
-- Si le site redemande l'authentification : fermer le navigateur et relancer `run_synty_sync.cmd` pour effectuer la première étape visible.
-- Relancer l'installateur est sans danger : les dépendances sont remises à jour sans supprimer les archives de la bibliothèque.
+From the repository root, after installation:
 
-L'installeur n'efface pas les archives existantes. Le dossier `.venv` et le navigateur Chromium peuvent occuper plusieurs centaines de mégaoctets. Le profil Chromium (dans le dossier de destination) est privé et doit rester accessible uniquement à l'utilisateur du PC.
+```powershell
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --check-config
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --limit-packages 1
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --headless
+```
+
+You can also run `SyntyDownloader/run_synty_sync.cmd` to perform the interactive stage, then a full headless sync. The root YAML is always the default configuration for these commands.
+
+## Notes
+
+- The root `install.cmd` uses `powershell.exe -ExecutionPolicy Bypass` **only for the launched process**; it does not change Windows policy permanently.
+- Re-running the installer repairs packages without deleting downloaded assets.
+- Python dependencies and browser binaries may use several hundred MB.
+- If `winget` is unavailable, install Python 3.10+ manually and rerun `install.cmd`.
+- Private `config.yaml`, Chromium profiles, and download history are excluded by the repository `.gitignore` and must not be committed.

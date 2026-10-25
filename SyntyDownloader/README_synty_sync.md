@@ -30,10 +30,10 @@ py -3 -m playwright install chromium
 ## Configuration : `config.yaml`
 
 Les identifiants et la destination sont désormais définis dans
-`SyntyDownloader/config.yaml` (à côté de `synty_sync.py`) :
+`../config.yaml` (à la racine du dépôt, au-dessus de `SyntyDownloader`) :
 
 ```yaml
-output_dir: ../SyntyLibrary
+output_dir: SyntyLibrary
 login:
   email: "toto"                 # Adresse e-mail Synty Store
   password: "tata"              # Utilisé seulement si un formulaire le demande
@@ -41,9 +41,9 @@ login:
 ```
 
 - Le chemin relatif de `output_dir` est résolu **depuis le fichier YAML**, indépendamment du répertoire depuis lequel on lance Python.
-- Pour déplacer les trois dossiers sur un autre disque, conserver `../SyntyLibrary`.
-- Si nécessaire, copier `config.example.yaml` vers `config.yaml`, puis adapter les champs.
-- `config.yaml` est **ignoré par Git** via le `.gitignore` à la racine. Ne jamais enregistrer de vrais identifiants dans `config.example.yaml`.
+- Pour déplacer les trois dossiers sur un autre disque, conserver `SyntyLibrary`.
+- Si nécessaire, copier `../config.example.yaml` vers `../config.yaml`, puis adapter les champs.
+- `config.yaml` est **ignoré par Git** via le `.gitignore` à la racine. Ne jamais enregistrer de vrais identifiants dans `../config.example.yaml`.
 - Synty peut demander un code à usage unique reçu par e-mail. Le mot de passe est facultatif.
 
 Installer les nouvelles dépendances depuis `SyntyDownloader` :
@@ -52,7 +52,7 @@ Installer les nouvelles dépendances depuis `SyntyDownloader` :
 .\.venv\Scripts\python.exe -m pip install -r .\synty_requirements.txt
 ```
 
-Ou relancer `install_synty_sync.cmd`, qui installe maintenant `PyYAML`.
+Ou relancer `../install.cmd`, qui installe maintenant `PyYAML`.
 
 ## Utilisation
 
@@ -80,7 +80,7 @@ Synchronisation complète :
 .\.venv\Scripts\python.exe .\synty_sync.py --headless
 ```
 
-Le lanceur `run_synty_sync.cmd` exécute successivement un démarrage interactif
+Le lanceur autonome `run_synty_sync.cmd` exécute successivement un démarrage interactif
 sur un package puis une synchronisation complète headless. Son ancien paramètre
 PowerShell `-OutputDir` est accepté mais ignoré (compatibilité avec le lanceur
 existant de Local Dex) : le chemin du YAML reste prioritaire. L'option Python

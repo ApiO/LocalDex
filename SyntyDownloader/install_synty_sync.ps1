@@ -1,6 +1,6 @@
 # Synty Sync installer for Windows 11 / Windows PowerShell 5.1+
 # Runs without administrator rights when winget supports per-user installation.
-# Launch via install_synty_sync.cmd to avoid permanently changing execution policy.
+# Launch via the root install.cmd to avoid permanently changing execution policy.
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -10,6 +10,7 @@ $ScriptPath = Join-Path $ProjectDir 'synty_sync.py'
 $RequirementsPath = Join-Path $ProjectDir 'synty_requirements.txt'
 $VenvDir = Join-Path $ProjectDir '.venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
+$ConfigPath = Join-Path (Split-Path -Parent $ProjectDir) 'config.yaml'
 
 function Step([string]$Message) {
     Write-Host "`n==> $Message" -ForegroundColor Cyan
@@ -111,7 +112,7 @@ try {
         $env:Path = "$machinePath;$userPath"
         $python = Find-Python
         if (-not $python) {
-            throw 'Python est toujours introuvable. Fermer et rouvrir la session Windows, puis relancer install_synty_sync.cmd.'
+            throw 'Python est toujours introuvable. Fermer et rouvrir la session Windows, puis relancer install.cmd.'
         }
     }
 
@@ -145,12 +146,20 @@ try {
     Invoke-Checked -Executable $VenvPython -Arguments @('-c', 'import bs4; import playwright; import yaml')
     Write-Host 'Dependances OK' -ForegroundColor Green
     Invoke-Checked -Executable $VenvPython -Arguments @('-m', 'py_compile', $ScriptPath)
-    Invoke-Checked -Executable $VenvPython -Arguments @($ScriptPath, '--check-config')
+    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+        & $VenvPython $ScriptPath --check-config
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Dependances installees, mais config.yaml reste a corriger a la racine du depot.'
+        }
+    }
+    else {
+        Write-Warning 'Configuration non trouvee. Editez config.yaml a la racine du depot depuis Local Dex.'
+    }
 
     Write-Host "`nInstallation terminee avec succes !" -ForegroundColor Green
-    Write-Host '1. Modifier config.yaml (login.email, login.password, login.customer_id, output_dir).'
+    Write-Host '1. Modifier le config.yaml a la racine du depot (login.email, login.customer_id, output_dir).'
     Write-Host '2. Verifier avec : .venv\Scripts\python.exe synty_sync.py --check-config'
-    Write-Host '3. Double-cliquer sur run_synty_sync.cmd pour lancer la synchronisation.'
+    Write-Host '3. Double-cliquer sur launch_localdex.cmd a la racine du depot, puis utiliser Configuration.'
     exit 0
 }
 catch {

@@ -3,7 +3,7 @@
 
 Dépendances : pip install -r synty_requirements.txt
 Puis       : python -m playwright install chromium
-Exemple    : python synty_sync.py --config config.yaml
+Exemple    : python synty_sync.py --check-config
 
 IMPORTANT : Synty utilise désormais essentiellement une connexion par code e-mail.
 Le compte, le mot de passe facultatif et le répertoire de sortie sont définis
@@ -34,10 +34,10 @@ from playwright.sync_api import BrowserContext, Page, TimeoutError as Playwright
 
 
 # -----------------------------------------------------------------------------
-# Configuration : config.yaml (privé, relatif au dossier de ce script)
+# Configuration : config.yaml privé à la racine du dépôt
 # -----------------------------------------------------------------------------
 BASE_URL = "https://syntystore.com"
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ def load_config(config_path: Path) -> SyncConfig:
     if not path.is_file():
         raise FileNotFoundError(
             f"Configuration introuvable : {path}. "
-            "Copiez config.example.yaml vers config.yaml et remplissez-le."
+            "Copiez le config.example.yaml de la racine vers config.yaml et remplissez-le."
         )
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -554,7 +554,7 @@ def synchronize_package(page: Page, package: Package, folder_name: str, root: Pa
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Synchroniser les packages Synty Store")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH,
-                        help="Fichier YAML (défaut : config.yaml à côté du script)")
+                        help="Fichier YAML (défaut : ../config.yaml à la racine du dépôt)")
     parser.add_argument("--output", type=Path,
                         help="Override manuel facultatif de output_dir (compatibilité CLI)")
     parser.add_argument("--check-config", action="store_true",
