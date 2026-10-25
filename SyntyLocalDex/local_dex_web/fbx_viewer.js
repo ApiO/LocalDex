@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /** Offline FBX mesh renderer. Geometry is parsed by the local Python server.
  * No CDN, 3D engine installation, global assets, or downloaded-file writes.
  * This is a STATIC GEOMETRY preview, not a full FBX runtime or skinning renderer.

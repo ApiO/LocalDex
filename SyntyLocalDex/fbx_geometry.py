@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Small, dependency-free FBX mesh preview reader (NOT a complete FBX importer).
 
 Supports geometry in common binary 7.x and ASCII 7.x FBX files. It ignores

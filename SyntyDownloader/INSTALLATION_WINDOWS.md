@@ -1,42 +1,60 @@
-# Synty Downloader — Windows installation
+# Installing SyntyDownloader on Windows
 
-Prefer the [repository root README](../README.md) for the recommended **Web UI workflow**.
+For the simplest workflow, follow the [root README](../README.md) and use the
+LocalDex **Configuration** page for installation status and synchronization.
 
-## Setup
+## Recommended setup
 
-1. Run **`../install.cmd`** from the repository root. It detects or installs Python 3.10+, creates `SyntyDownloader/.venv` and installs Python packages plus Playwright Chromium.
-2. Run **`../launch_localdex.cmd`** to open the browser at `http://127.0.0.1:8765`.
-3. On the **Configuration** page, select **Open config.yaml** and enter your Synty Store email and `customer_id`.
-4. Run **Sync downloads** and **Sync assets / Rebuild index** from the same page.
+1. Clone or extract the repository into a folder of your choice. Keep
+   `SyntyDownloader`, `SyntyLibrary`, and `SyntyLocalDex` as sibling directories.
+2. Copy the root `config.example.yaml` to `config.yaml` and provide your
+   Synty Store email and numeric `customer_id` (shown in your **My downloads**
+   URL, after `/apps/downloads/orders/`). The password can usually be blank.
+3. Double-click **`install.cmd`** at the repository root. It installs or
+   reuses Python 3.10+, creates `SyntyDownloader/.venv`, installs packages,
+   and downloads Playwright Chromium.
+4. Double-click **`launch_localdex.cmd`**. Open
+   `http://127.0.0.1:8765` and use **Configuration** to check readiness,
+   synchronize downloads, and rebuild the asset index.
 
-On first launch, the root launchers create `../config.yaml` from `../config.example.yaml` if missing, or safely migrate a legacy `SyntyDownloader/config.yaml` to the root. For the standard sibling layout, configure:
+The root launchers can initialize root `config.yaml` from the example or
+migrate the legacy `SyntyDownloader/config.yaml`. Check the resulting
+`output_dir`: with a root YAML and sibling folders, use `SyntyLibrary`.
 
-```yaml
-output_dir: SyntyLibrary
-login:
-  email: "your-email@example.com"
-  password: ""
-  customer_id: "1234567890123"
-```
+## Direct commands (optional)
 
-Find your numeric customer ID in the Synty Store **My downloads** URL: `.../apps/downloads/orders/<customer_id>`. Do not use the full URL.
-
-## Standalone commands
-
-From the repository root, after installation:
+Open PowerShell at the **repository root** after installation:
 
 ```powershell
+# Inspect YAML configuration without starting a browser
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --check-config
+
+# First login / download from one pack
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --limit-packages 1
+
+# Synchronize all packs using an existing authenticated session
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --headless
 ```
 
-You can also run `SyntyDownloader/run_synty_sync.cmd` to perform the interactive stage, then a full headless sync. The root YAML is always the default configuration for these commands.
+You can also run `SyntyDownloader/run_synty_sync.cmd`, which performs an
+interactive one-pack stage followed by a headless full sync. If authentication
+expires, use the interactive mode and enter the email verification code.
 
-## Notes
+## Troubleshooting and safety
 
-- The root `install.cmd` uses `powershell.exe -ExecutionPolicy Bypass` **only for the launched process**; it does not change Windows policy permanently.
-- Re-running the installer repairs packages without deleting downloaded assets.
-- Python dependencies and browser binaries may use several hundred MB.
-- If `winget` is unavailable, install Python 3.10+ manually and rerun `install.cmd`.
-- Private `config.yaml`, Chromium profiles, and download history are excluded by the repository `.gitignore` and must not be committed.
+- **Python not found:** if `winget` is unavailable or restricted, install
+  Python 3.10+ manually and rerun `install.cmd`.
+- **Missing packages/Chromium:** rerun `install.cmd` to repair installation.
+- **PowerShell execution policy:** `install.cmd` uses a process-level policy
+  override; it does not permanently relax Windows settings. Organization
+  policies can still block scripts.
+- **Browser download size:** Chromium and dependencies can occupy several
+  hundred MB, depending on platform and version.
+- **Protect secrets:** root `config.yaml`, browser profiles, history, and
+  logs should never be committed or shared. See [`.gitignore`](../.gitignore).
+- **Already installed?** Rerunning the installer does not delete downloaded
+  asset files.
+
+More advanced options: [downloader guide](README_synty_sync.md).
+Licensing and attribution: [NOTICE](../NOTICE) and
+[AI-assisted development](../docs/AI_ASSISTED_DEVELOPMENT.md).

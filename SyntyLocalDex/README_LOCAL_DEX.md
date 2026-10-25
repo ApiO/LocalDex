@@ -1,53 +1,92 @@
-# Synty Local Dex — component guide
+# LocalDex — Web UI and indexer guide
 
-This is the Web UI and local search index for downloaded Synty assets. For the quickest setup and the complete repository layout, see the [root README](../README.md).
+This component provides the local Web UI, SQLite catalog, search and asset
+previews. Start with the [root README](../README.md) for the recommended
+Windows installation workflow and the full repository layout.
 
-## Launch and configuration
+## Startup and paths
 
-The three folders `SyntyDownloader/`, `SyntyLibrary/` and `SyntyLocalDex/` must remain **neighbors** beneath one repository root. The parent folder can live on any drive.
+The repository contains three sibling directories:
+`SyntyDownloader/`, `SyntyLibrary/`, and `SyntyLocalDex/`.
+You can move the entire repository to another drive without rewriting paths.
 
-- **`../install.cmd`**: prepares the downloader Python environment and Chromium (also available from the Configuration page).
-- **`../launch_localdex.cmd`**: starts the local Web UI, by default at `http://127.0.0.1:8765`.
-- **`../config.yaml`**: private account/login configuration and the downloader's `output_dir`, normally `SyntyLibrary`. It is ignored by Git and created/migrated by the root launchers.
-- **`rebuild_local_dex.cmd`**: optional CLI index refresh; available from the Web UI through **Configuration → Sync assets / Rebuild index**.
-- **`sync_and_rebuild_dex.cmd`**: optional legacy combined launcher for downloader sync followed by indexing. The downloader reads **root** `config.yaml`.
+- **`../install.cmd`**: install/repair Python, downloader dependencies and
+  Playwright Chromium.
+- **`../launch_localdex.cmd`**: start the Web UI at
+  `http://127.0.0.1:8765` (default).
+- **`../config.yaml`**: private account configuration and downloader
+  `output_dir`, normally `SyntyLibrary`, relative to the root YAML file.
+- **`rebuild_local_dex.cmd`**: optional direct index build; also available in
+  **Configuration → Sync assets / Rebuild index**.
+- **`sync_and_rebuild_dex.cmd`**: optional legacy combined sync/index launcher.
+  It uses the downloader's root `config.yaml`.
 
-The local Web UI needs Python 3.10+; its HTTP server and indexer use the Python standard library. Downloader access from the Configuration page additionally needs Playwright, PyYAML, Chromium and the other packages installed into `SyntyDownloader/.venv`.
+The HTTP server and indexer use the Python standard library; downloader
+operations additionally require the dependencies in
+`SyntyDownloader/.venv`. The private configuration and generated caches
+remain excluded from Git.
 
-## Web UI features
+## Browser pages
 
-- **Overview:** library entry point.
-- **Asset packs:** browse collections and package covers, select a pack to inspect its content.
-- **Pack Explorer:** browse indexed assets and downloaded files in **Grid/List** mode. Selecting an asset opens the resizeable **Asset Details** panel **without navigation away**.
-- **Assets:** search all indexed asset entries and inspect details. Supports Grid/List, filters and automatic load-more on scroll.
-- **Statistics:** storage, pack counts, file formats, categories and largest packages.
-- **Configuration:** check readiness and last-run timestamps, install/repair downloader, edit root config, sync downloads (with email-code authentication), index assets and view logs.
+| Page | Description |
+| --- | --- |
+| **Overview** | Browse entry point and quick access to collections. |
+| **Asset packs** | Pack covers and collections; select a pack to enter Pack Explorer. |
+| **Pack Explorer** | Discoverable assets and original downloaded files in Grid/List mode. Selecting an asset opens **Asset Details** without leaving the pack. |
+| **Assets** | Global asset search, filters, Grid/List mode and **Asset Details**. |
+| **Statistics** | Summary of counts, formats, categories, storage and large packs. |
+| **Configuration** | Readiness and run history, downloader install/repair, root config editor, synchronization, index rebuild, logs and email-code authentication. |
 
-The side panel appears on **Assets and Pack Explorer**. It can be resized horizontally between its original width and twice that width. Display mode and Light/Dark theme choices persist in the browser.
+The **Asset Details** panel appears on **Assets and Pack Explorer** and can
+be resized by dragging its left border (from its default width to twice that
+width). The browser remembers display mode and Light/Dark theme preferences.
+Paginated asset lists automatically load more on scrolling, with a manual
+**Load more** fallback.
 
-## Index and preview behavior
+## Index and media previews
 
-The catalog is generated in `SyntyLocalDex/.localdex/` (SQLite index and cache), **not** in the downloaded library. Browsing is local. Index updates can change catalog records but never remove original download files.
+The indexer reads `../SyntyLibrary` (or the configured library folder) and
+creates generated files under **`SyntyLocalDex/.localdex/`**. This contains
+an SQLite index and cached artifacts; it is not committed to Git. Indexing
+and previewing do **not** delete or overwrite the downloaded source files.
 
-The indexer infers categories and collections from folder/file naming. The first supported root-level image in a package (alphabetical order) is selected as the pack cover, with fallback candidates when no root image is available.
+Collections and categories are inferred from paths and filenames. The first
+supported root-level image in a pack folder (alphabetical order) is preferred
+as its cover; other candidate images can serve as fallbacks.
 
-Images, animated images, video, audio, OBJ and supported FBX mesh previews work without unpacking complete ZIP or Unity packages. The FBX preview is limited to static mesh geometry; rigging, materials and animations might not display.
+Supported previews include common images and animations, video/audio, OBJ and
+some FBX static meshes. ZIP and Unity package contents can be inspected on
+demand without extracting entire archives. FBX materials, rigging, textures
+and skeletal animations may not be represented.
 
-### Run directly (advanced)
+## Advanced CLI
+
+From `SyntyLocalDex/` with Python 3.10+:
 
 ```powershell
-# From the SyntyLocalDex directory
 py -3 .\build_local_dex.py
 py -3 .\local_dex_server.py
 ```
 
-The server binds to **127.0.0.1**, not the network interface. You can change the port with `--port 8766`. Keep the server console open while browsing.
+The default listener is bound to **127.0.0.1**, not a public network
+interface. To change the port, pass `--port 8766` to
+`local_dex_server.py`. Keep the server terminal running while browsing.
 
-## Running tests
+### Tests
+
+From the repository root:
 
 ```powershell
-cd SyntyLocalDex
-py -3 -m unittest discover -s tests -v
+py -3 -m unittest discover -s SyntyLocalDex\tests -v
 ```
 
-The downloader and Synty Store authentication can change over time; browser automation may require maintenance if Synty changes its login or downloads HTML. Asset files remain subject to their original licenses.
+Real-world Synty HTML and authentication flows can change and might require
+updates to the downloader. See the [downloader guide](../SyntyDownloader/README_synty_sync.md).
+
+## License and origins
+
+LocalDex first-party software is offered under
+[GPL-3.0-only](../LICENSE) where contributors hold the necessary rights.
+See [NOTICE](../NOTICE), [AI-assisted development](../docs/AI_ASSISTED_DEVELOPMENT.md),
+and [third-party license notes](../docs/THIRD_PARTY_LICENSES.md). Synty
+downloads and embedded third-party assets retain their original licenses.

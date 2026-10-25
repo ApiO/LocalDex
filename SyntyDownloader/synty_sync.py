@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Synchronisation non destructive de la bibliothèque Synty Store (Sky Pilot).
 
 Dépendances : pip install -r synty_requirements.txt

@@ -1,119 +1,124 @@
-# Synty Store — Synchronisation de bibliothèque
+# SyntyDownloader — standalone synchronization guide
 
-## Ce que fait le script
+SyntyDownloader uses a Playwright-controlled Chromium browser to download
+files that your account is authorized to access from Synty Store. It does not
+change your Synty account, delete existing downloads, or bypass MFA/CAPTCHA.
+For the recommended Web UI workflow, start with the [root README](../README.md).
 
-Ce script synchronise uniquement les téléchargements autorisés de **votre bibliothèque Synty Store** via un navigateur Chromium piloté par Playwright. Il ne modifie pas le contenu du compte Synty.
+## What it does
 
-- Page de bibliothèque : `.../apps/downloads/orders/<CUSTOMER_ID>`
-- Pagination via le lien `.sky-pilot-pagination .next a`
-- Packages via `.sky-pilot-files-list a.sky-pilot-list-item`
-- Boutons de fichiers via `a.button.sky-pilot-button` vers `/apps/downloads/downloads/...`
-- Connexion interactive et code reçu par e-mail lorsque nécessaire
-- Sauvegarde durable de la session dans un profil Chromium local
-- Sauvegarde dans `<output>/<nom du package>/<nom du fichier>` (sans extraction)
-- Ne supprime jamais et n'écrase jamais les archives déjà présentes
-- Historique par lien de téléchargement (`.synty_history.json`) ; si un lien a déjà été téléchargé et que le fichier existe, aucun clic/téléchargement n'est effectué
-- Si un fichier est trouvé avec le même nom mais un contenu différent, une copie suffixée par l'identifiant de téléchargement est enregistrée
-- Si une erreur survient, les autres fichiers sont traités et les erreurs sont tracées
+- Opens `https://syntystore.com/apps/downloads/orders/<customer_id>` and
+  follows the **My downloads** pagination.
+- Discovers pack pages using `.sky-pilot-files-list` and downloads the files
+  linked by `a.button.sky-pilot-button`.
+- Supports an interactive sign-in and email verification code when required.
+- Reuses a local Chromium browser profile for later runs.
+- Saves files to `<output_dir>/<pack name>/<downloaded filename>` without
+  extracting ZIP or Unity packages.
+- Records successful download URLs/paths in `.synty_history.json`, skipping
+  files already present and recorded in the history.
+- Never deletes or overwrites existing asset files. When different downloads
+  produce the same name, it uses a distinct filename.
+- Logs failures and continues with other files where possible; interrupted
+  downloads are not marked as successfully completed.
 
-## Prérequis Windows 11
+## Setup (Windows)
 
-Installer Python 3.10+.
+From the repository root:
 
-Dans PowerShell, dans le dossier où se trouvent `synty_sync.py` et `synty_requirements.txt` :
+1. Copy `config.example.yaml` to **`config.yaml`** and edit the values.
+2. Run **`install.cmd`** to install or reuse Python 3.10+, create
+   `SyntyDownloader/.venv`, install dependencies, and install Playwright Chromium.
+3. For Web UI control, launch `launch_localdex.cmd`, open **Configuration**,
+   and use **Sync downloads**.
 
-```powershell
-py -3 -m pip install -r .\synty_requirements.txt
-py -3 -m playwright install chromium
-```
+`SyntyDownloader/synty_requirements.txt` lists Playwright, Beautiful Soup 4
+and PyYAML. The installer avoids permanently changing Windows PowerShell
+execution-policy settings.
 
-## Configuration : `config.yaml`
-
-Les identifiants et la destination sont désormais définis dans
-`../config.yaml` (à la racine du dépôt, au-dessus de `SyntyDownloader`) :
+### Root configuration
 
 ```yaml
+# LocalDex/config.yaml — never commit account credentials
 output_dir: SyntyLibrary
 login:
-  email: "toto"                 # Adresse e-mail Synty Store
-  password: "tata"              # Utilisé seulement si un formulaire le demande
-  customer_id: "4393663955098" # Identifiant déjà utilisé dans le script précédent
+  email: "your-email@example.com"
+  password: ""  # optional; Synty may use email OTP authentication
+  customer_id: "1234567890123"
 ```
 
-- Le chemin relatif de `output_dir` est résolu **depuis le fichier YAML**, indépendamment du répertoire depuis lequel on lance Python.
-- Pour déplacer les trois dossiers sur un autre disque, conserver `SyntyLibrary`.
-- Si nécessaire, copier `../config.example.yaml` vers `../config.yaml`, puis adapter les champs.
-- `config.yaml` est **ignoré par Git** via le `.gitignore` à la racine. Ne jamais enregistrer de vrais identifiants dans `../config.example.yaml`.
-- Synty peut demander un code à usage unique reçu par e-mail. Le mot de passe est facultatif.
+Relative paths in `output_dir` resolve from the directory containing the
+**root** `config.yaml`, regardless of the current working directory. The
+standard value is `SyntyLibrary`; do not use the previous `../SyntyLibrary`
+value if you have moved the YAML to the repository root.
 
-Installer les nouvelles dépendances depuis `SyntyDownloader` :
+**Where to find `customer_id`:** sign in at
+[syntystore.com](https://syntystore.com/), open **My downloads**, then copy
+the digits after `/apps/downloads/orders/` from the browser URL. You can also
+check the `logged_in_customer_id` query parameter. Do not enter the full URL
+or share private download links.
+
+## CLI usage
+
+Run these commands **from the repository root** after installation:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r .\synty_requirements.txt
+# Validate YAML (does not launch Chromium)
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --check-config
+
+# Discover candidate downloads without saving files
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --dry-run
+
+# First interactive login / one pack
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --limit-packages 1
+
+# Synchronize the full library with a saved authenticated session
+.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --headless
 ```
 
-Ou relancer `../install.cmd`, qui installe maintenant `PyYAML`.
+`SyntyDownloader/run_synty_sync.cmd` runs an interactive one-pack sync followed
+by a headless full sync. If the saved session has expired, run without
+`--headless` and enter the email verification code in Chromium or the calling
+interface. The old PowerShell `-OutputDir` argument remains accepted for
+compatibility, but the root YAML determines the destination. An explicit
+Python `--output` flag can override it for a manual one-off run.
 
-## Utilisation
-
-Vérifier le YAML sans lancer Chromium :
-
-```powershell
-.\.venv\Scripts\python.exe .\synty_sync.py --check-config
-```
-
-Simulation :
-
-```powershell
-.\.venv\Scripts\python.exe .\synty_sync.py --dry-run
-```
-
-Premier téléchargement limité à un seul package :
-
-```powershell
-.\.venv\Scripts\python.exe .\synty_sync.py --limit-packages 1
-```
-
-Synchronisation complète :
-
-```powershell
-.\.venv\Scripts\python.exe .\synty_sync.py --headless
-```
-
-Le lanceur autonome `run_synty_sync.cmd` exécute successivement un démarrage interactif
-sur un package puis une synchronisation complète headless. Son ancien paramètre
-PowerShell `-OutputDir` est accepté mais ignoré (compatibilité avec le lanceur
-existant de Local Dex) : le chemin du YAML reste prioritaire. L'option Python
-`--output` reste disponible pour une surcharge **manuelle**, si nécessaire.
-
-Si la session a expiré, exécuter à nouveau la commande sans `--headless` et
-entrer le code reçu par e-mail (dans la console ou Chromium). La session est
-conservée dans `<output_dir>/.synty_browser_profile`.
-
-## Structure de destination
+## Output and state
 
 ```text
-SyntyLibrary\
-  ANIMATION - Base Locomotion\
-    archive_1.zip
-    archive_2.unitypackage
-  POLYGON - Adventure Pack\
-    adventure_pack.zip
-  .synty_history.json          # Historique des liens utilisés
-  .synty_sync.log              # Journal des actions et erreurs
-  .synty_browser_profile\     # Session d'authentification du navigateur
-  .synty-partials\            # Éventuels fragments de transferts échoués
+SyntyLibrary/
+├── ANIMATION - Base Locomotion/
+│   ├── archive_1.zip
+│   └── archive_2.unitypackage
+├── POLYGON - Adventure Pack/
+│   └── adventure_pack.zip
+├── .synty_history.json           # Successful download history
+├── .synty_sync.log               # Operational log
+├── .synty_browser_profile/      # Private Chromium login session
+└── .synty-partials/             # Possible incomplete transfers
 ```
 
-Les fichiers sont conservés **tels que fournis par le site** ; les archives ne sont pas automatiquement extraites. Des noms différents pourront être proposés par le serveur.
+Actual pack and filenames are supplied by Synty Store. The downloaded files
+remain in their original format. An existing nonempty file is skipped when
+its entry is still present in the download history; deleting a downloaded
+file lets a future run fetch it again. Existing files that are not yet in the
+history might need to be fetched once to compare their content reliably.
 
-## Notes importantes
+## Safety and troubleshooting
 
-- **Testé localement** sur votre fichier HTML de bibliothèque fourni : 15 packages et un lien vers la page 2. Le HTML des pages individuelles de package et la connexion réelle ne sont **pas** disponibles localement, donc un test réel avec votre compte est nécessaire.
-- Le site peut changer sa structure HTML, les boutons de téléchargement ou son mécanisme d'authentification. Les sélecteurs peuvent alors nécessiter un ajustement.
-- Par défaut, les téléchargements sont séquentiels avec une pause d'une seconde (`--delay 3` pour ralentir).
-- Le script ne contourne pas les CAPTCHA, le contrôle d'accès, ni les limites de téléchargement imposées par le site.
-- Le profil `.synty_browser_profile` contient des cookies de connexion. L'historique peut contenir votre adresse e-mail dans des URL. **Ne partagez pas ces fichiers et ne les ajoutez pas à Git**.
-- Un fichier déjà référencé dans l'historique n'est pas téléchargé si son chemin est encore présent et de taille non nulle. Si vous supprimez un fichier, il sera téléchargé à nouveau au prochain lancement. Les fichiers de bibliothèque existants ne sont jamais supprimés par le script.
-- Lorsqu'un fichier existant n'est *pas* encore dans l'historique, il faut recevoir le téléchargement une première fois pour connaître et comparer de manière fiable son nom et ses octets. Les synchronisations suivantes le reconnaîtront grâce à l'historique.
-- Les téléchargements ayant échoué ne sont pas marqués comme réussis ; les fragments laissés dans `.synty-partials` peuvent être examinés/nettoyés manuellement.
+- Do not share `config.yaml`, `.synty_browser_profile`, `.synty_history.json`
+  or logs. Download URLs and profile data may contain personal/session details.
+- Do not publish downloaded Synty assets; they retain their own licenses.
+- If the store changes its HTML or authentication steps, selectors and login
+  automation may need updating.
+- Downloads are processed sequentially with a short delay; use the CLI's
+  `--delay` option if you need to slow the sync further.
+- The downloader does not bypass Synty access controls or rate limits.
+- Interrupted transfers may leave files in `.synty-partials`; inspect/remove
+  them manually only when it is safe to do so.
+- Re-run the root `install.cmd` if dependencies or Chromium are missing.
+
+Licensing of LocalDex itself and AI-assisted development disclosures are in
+[LICENSE](../LICENSE), [NOTICE](../NOTICE), and
+[AI-assisted development](../docs/AI_ASSISTED_DEVELOPMENT.md). These documents
+do not change the licenses attached to downloaded Synty assets.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Local Dex's explicit, local-only installer / sync / index job controller.
 
 No user-provided executable paths or shell commands are accepted. Downloader

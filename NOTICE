@@ -1,20 +1,26 @@
-Synty Local Dex
-Copyright (C) 2026 Synty Local Dex contributors
+LocalDex
+Copyright (C) 2026 LocalDex contributors
 
-Synty Local Dex, including SyntyDownloader and SyntyLocalDex, is
-licensed under the GNU General Public License, version 3 only
-(SPDX-License-Identifier: GPL-3.0-only). See the LICENSE file
-for the complete license text.
+Original project: https://github.com/ApiO/LocalDex
 
-Original project: Synty Local Dex
+The first-party LocalDex application source code is distributed under the
+GNU General Public License, version 3 only (SPDX: GPL-3.0-only), to the
+extent that its contributors have the rights required to grant that license.
+See LICENSE for the complete license text. Preserve applicable copyright,
+license, and modification notices when redistributing the software.
 
-Redistributions and modified versions must preserve applicable
-copyright and license notices and comply with the GNU GPL version 3,
-including the corresponding-source obligations when software is
-conveyed to other recipients.
+Development of this project has been assisted by OpenAI ChatGPT, including
+source-code, documentation, and visual-asset generation. Project contributors
+specify requirements, choose designs, integrate changes, and review the work.
+AI assistance does not establish copyright ownership or guarantee that any
+particular generated contribution is eligible for copyright protection.
+See docs/AI_ASSISTED_DEVELOPMENT.md for additional information.
 
-This is an unofficial project and is not affiliated with or endorsed
-by Synty Studios or Synty Store. The GNU GPL applies to this project's
-own source code; it does not grant rights to downloaded Synty asset
-packs, models, animations, textures, or other third-party content.
-Those materials remain subject to their respective licenses.
+LocalDex is an independent project. It is not affiliated with, sponsored by,
+or endorsed by Synty Studios, Synty Store, or OpenAI.
+
+The GPL does NOT grant rights to downloaded third-party content, including
+Synty asset packs, 3D models, animations, textures, or trademarked material.
+Any such content remains subject to the original rights holders' terms.
+Third-party dependencies retain their own licenses; see
+docs/THIRD_PARTY_LICENSES.md for a dependency overview.

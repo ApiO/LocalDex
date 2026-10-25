@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Local-only web interface for the Synty Dex catalog. Standard-library server."""
 from __future__ import annotations
 

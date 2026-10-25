@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """Non-destructive, incremental Synty library indexer. Python >=3.10.
 
 Run without arguments when installed in SyntyLocalDex beside SyntyLibrary:
