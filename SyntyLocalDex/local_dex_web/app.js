@@ -33,10 +33,40 @@ const videoExt = new Set(['.mp4', '.webm']);
 const audioExt = new Set(['.mp3', '.wav', '.ogg']);
 let searchTimer, toastTimer, requestId = 0, viewerToken = 0, closeFbxViewer = null;
 const THEME_KEY = 'synty-local-dex-theme-v1';
+const SIDEBAR_COLLAPSED_KEY = 'synty-local-dex-sidebar-collapsed-v1';
 const ASSET_VIEW_KEY = 'synty-local-dex-assets-view-v1';
 const PACK_VIEW_KEY = 'synty-local-dex-pack-view-v1';
 let assetViewMode = 'grid';
 let packViewMode = 'grid';
+let archiveItems = [];
+let availableArchiveFormats = [];
+let allArchiveFormatsSelected = true;
+const selectedArchiveFormats = new Set();
+const selectedArchiveIds = new Set();
+const collapsedArchivePackages = new Set();
+function setSidebarCollapsed(collapsed, persist = false) {
+  const root = document.documentElement;
+  if (collapsed) root.dataset.sidebarCollapsed = 'true';
+  else delete root.dataset.sidebarCollapsed;
+  const toggle = $('sidebar-toggle');
+  if (toggle) {
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.innerHTML = `<span aria-hidden="true">${collapsed ? '›' : '‹'}</span>`;
+  }
+  if (persist) {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); }
+    catch (_) { /* Keep the current session's preference if storage is unavailable. */ }
+  }
+}
+let archiveListBusy = false;
+let archiveExtractionBusy = false;
+let archiveExtractionJobId = null;
+let archiveProgressLogSignature = '';
+let archiveProgressEntries = [];
+let archiveLogFailuresOnly = false;
 const AUTO_LOAD_MARGIN = 400;
 let listingBusy = false;
 let autoMoreBlocked = false;
@@ -287,8 +317,8 @@ function renderSidebar() {
   const collections = state.catalog.stats.collections;
   $('sidebar-collections').innerHTML = Object.keys(collections).sort().map(name =>
     `<button class="nav-link ${state.page === 'packs' && state.collection === name ? 'active' : ''}"
-      data-action="collection" data-name="${escapeHtml(name)}">
-      <span class="side-collection-dot" style="background:${collectionColor[name] || '#8b90a0'}"></span>
+      data-action="collection" data-name="${escapeHtml(name)}" aria-label="Collection: ${escapeHtml(name)}" title="${escapeHtml(name)}">
+      <span class="side-collection-dot" aria-hidden="true" style="background:${collectionColor[name] || '#8b90a0'}"></span>
       ${escapeHtml(name)}<span class="nav-count">${prettyNum(collections[name])}</span></button>`).join('');
   $('collection-filter').innerHTML = '<option value="">All collections</option>' + Object.keys(collections).sort()
     .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
@@ -336,6 +366,31 @@ function renderStats() {
   const date = new Date(state.catalog.generated_at);
   $('index-date').textContent = isNaN(date.valueOf()) ? 'Catalog loaded' : `Indexed ${date.toLocaleDateString()}`;
 }
+let extractionStatsRequestId = 0;
+async function refreshExtractionStats() {
+  const request = ++extractionStatsRequestId;
+  for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
+    'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '…';
+  $('stats-extraction-latest').textContent = 'Loading extraction history…';
+  try {
+    const stats = await api('/api/archive-statistics');
+    if (request !== extractionStatsRequestId) return;
+    $('stat-extraction-archives').textContent = prettyNum(stats.supported_archives);
+    $('stat-extraction-folders').textContent = prettyNum(stats.extraction_folders);
+    $('stat-extraction-unextracted').textContent = prettyNum(stats.unextracted_archives);
+    $('stat-extraction-recorded').textContent = prettyNum(stats.recorded_extractions);
+    const latest = stats.latest_extraction_at ? new Date(stats.latest_extraction_at) : null;
+    const latestLabel = latest && !Number.isNaN(latest.getTime()) ? latest.toLocaleString() : 'Never';
+    $('stats-extraction-latest').textContent = `Latest successful extraction: ${latestLabel}`;
+    $('stats-extraction-latest').title = stats.latest_extraction_at || '';
+  } catch (err) {
+    if (request !== extractionStatsRequestId) return;
+    for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
+      'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '—';
+    $('stats-extraction-latest').textContent = `Extraction statistics unavailable: ${err.message}`;
+    $('stats-extraction-latest').title = err.message;
+  }
+}
 function packById() { return state.catalog.packs.find(p => p.id === state.pack); }
 function showPackHeader() {
   const pack = packById();
@@ -358,15 +413,17 @@ function applyPage(page, resetFilters = false) {
   const isPack = page === 'pack';
   const isStatistics = page === 'statistics';
   const isConfiguration = page === 'configuration';
+  const isExtraTools = page === 'extra-tools';
   const showDetails = page === 'assets' || isPack;
   $('details-panel').hidden = !showDetails;
   document.querySelector('.app-shell').classList.toggle('has-details', showDetails);
   if (!showDetails) $('details-panel').classList.remove('open');
   // A pending asset search must never change a standalone page.
-  if (isStatistics || isConfiguration) ++requestId;
+  if (isStatistics || isConfiguration || isExtraTools) ++requestId;
   $('statistics-view').hidden = !isStatistics;
   $('configuration-view').hidden = !isConfiguration;
-  $('browse-view').hidden = isStatistics || isConfiguration;
+  $('extra-tools-view').hidden = !isExtraTools;
+  $('browse-view').hidden = isStatistics || isConfiguration || isExtraTools;
   $('pack-detail').hidden = !isPack;
   $('section-top').hidden = isPack;
   $('asset-view-toggle').hidden = !showDetails;
@@ -396,7 +453,9 @@ function applyPage(page, resetFilters = false) {
     : page === 'assets' ? 'Search models, names, file paths...' : 'Search pack name, collection, theme...';
   renderSidebar();
   if (isConfiguration) refreshConfiguration();
-  else if (!isStatistics) refresh();
+  else if (isExtraTools) refreshArchiveList();
+  else if (isStatistics) refreshExtractionStats();
+  else refresh();
 }
 function clearFilters(refreshNow = true) {
   for (const key of ['search', 'collection', 'kind', 'category', 'engine']) state[key] = '';
@@ -411,7 +470,7 @@ function navigate(page, id = '') {
 function routeFromHash() {
   if (!state.catalog) return;
   const route = location.hash.match(/^#\/pack\/([0-9a-f]{24})$/i);
-  const page = route ? 'pack' : ['overview', 'packs', 'assets', 'statistics', 'configuration']
+  const page = route ? 'pack' : ['overview', 'packs', 'assets', 'statistics', 'extra-tools', 'configuration']
     .includes(location.hash.slice(2)) ? location.hash.slice(2) : 'overview';
   const newPack = route ? route[1] : '';
   if (page !== state.page || newPack !== state.pack) {
@@ -662,6 +721,391 @@ async function startObjPreview(a, token) {
   }
 }
 
+// Extra Tools: searchable, filterable archive discovery and non-destructive extraction.
+const archiveFormatLabels = {
+  '.zip': 'ZIP (.zip)', '.unitypackage': 'Unity package (.unitypackage)',
+  '.tar.gz': 'TAR.GZ (.tar.gz)', '.tgz': 'TGZ (.tgz)', '.tar': 'TAR (.tar)',
+  '.gz': 'GZIP (.gz)', '.7z': '7-Zip (.7z)', '.rar': 'RAR (.rar)'
+};
+function getVisibleArchiveItems() {
+  const query = $('archive-search').value.trim().toLocaleLowerCase();
+  return archiveItems.filter(item => {
+    const matchesName = !query || item.name.toLocaleLowerCase().includes(query);
+    const matchesFormat = allArchiveFormatsSelected || selectedArchiveFormats.has(item.extension);
+    const matchesExtractionState = !$('archive-unextracted-only').checked || !item.destination_exists;
+    return matchesName && matchesFormat && matchesExtractionState;
+  });
+}
+function renderArchiveFormatFilter(afterRefresh = false) {
+  const formats = [...new Set(archiveItems.map(item => item.extension).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  availableArchiveFormats = formats;
+  if (allArchiveFormatsSelected) {
+    selectedArchiveFormats.clear();
+  } else {
+    for (const format of [...selectedArchiveFormats]) {
+      if (!formats.includes(format)) selectedArchiveFormats.delete(format);
+    }
+    if (formats.length && formats.every(format => selectedArchiveFormats.has(format))) {
+      allArchiveFormatsSelected = true;
+      selectedArchiveFormats.clear();
+    } else if (afterRefresh && selectedArchiveFormats.size === 0) {
+      allArchiveFormatsSelected = true;
+    }
+  }
+  $('archive-format-checkboxes').innerHTML = formats.map(format =>
+    `<label class="archive-format-option"><input class="archive-format-check" type="checkbox" data-format="${escapeHtml(format)}" ${allArchiveFormatsSelected || selectedArchiveFormats.has(format) ? 'checked' : ''}> <span>${escapeHtml(archiveFormatLabels[format] || format)}</span></label>`
+  ).join('');
+  $('archive-format-all').checked = allArchiveFormatsSelected;
+  $('archive-format-all').disabled = archiveExtractionBusy || formats.length === 0;
+  $('archive-format-summary').textContent = !formats.length ? 'No formats available'
+    : allArchiveFormatsSelected ? `All formats (${formats.length})`
+    : `${selectedArchiveFormats.size} format${selectedArchiveFormats.size === 1 ? '' : 's'} selected`;
+  $('archive-format-menu').classList.toggle('disabled', archiveExtractionBusy || formats.length === 0);
+  $('archive-format-checkboxes').querySelectorAll('.archive-format-check').forEach(input => {
+    input.disabled = archiveExtractionBusy;
+  });
+}
+function handleArchiveFormatChange(event) {
+  const target = event.target;
+  if (target.id === 'archive-format-all') {
+    allArchiveFormatsSelected = target.checked;
+    selectedArchiveFormats.clear();
+  } else if (target.matches('.archive-format-check')) {
+    const format = target.dataset.format;
+    if (allArchiveFormatsSelected) {
+      allArchiveFormatsSelected = false;
+      for (const available of availableArchiveFormats) selectedArchiveFormats.add(available);
+    }
+    if (target.checked) selectedArchiveFormats.add(format);
+    else selectedArchiveFormats.delete(format);
+    if (availableArchiveFormats.length && availableArchiveFormats.every(value => selectedArchiveFormats.has(value))) {
+      allArchiveFormatsSelected = true;
+      selectedArchiveFormats.clear();
+    }
+  } else {
+    return;
+  }
+  renderArchiveFormatFilter(false);
+  renderArchiveList();
+}
+function formatArchiveDate(value) {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return 'Unknown';
+  return date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+function updateArchiveSelectionControls() {
+  const visible = getVisibleArchiveItems();
+  const selectable = visible.filter(item => item.supported);
+  const selectedCount = archiveItems.filter(item => selectedArchiveIds.has(item.id) && item.supported).length;
+  const hiddenSelected = archiveItems.filter(item => selectedArchiveIds.has(item.id) && item.supported
+    && !visible.some(shown => shown.id === item.id)).length;
+  $('archive-selection-count').textContent = hiddenSelected
+    ? `${prettyNum(selectedCount)} selected (${prettyNum(hiddenSelected)} hidden by filters)`
+    : `${prettyNum(selectedCount)} selected`;
+  $('extract-archives').disabled = archiveExtractionBusy || archiveListBusy || selectedCount === 0;
+  $('extract-archives').textContent = archiveExtractionBusy ? 'Extracting archives…' : 'Extract archives';
+  $('archives-refresh').disabled = archiveExtractionBusy || archiveListBusy;
+  $('archive-search').disabled = archiveExtractionBusy;
+  $('archive-unextracted-only').disabled = archiveExtractionBusy;
+  $('archive-format-menu').classList.toggle('disabled', archiveExtractionBusy || availableArchiveFormats.length === 0);
+  $('archive-format-all').disabled = archiveExtractionBusy || availableArchiveFormats.length === 0;
+  $('archive-format-checkboxes').querySelectorAll('.archive-format-check').forEach(input => {
+    input.disabled = archiveExtractionBusy;
+  });
+  const selectAll = $('archives-select-all');
+  const selectedVisible = selectable.filter(item => selectedArchiveIds.has(item.id)).length;
+  selectAll.disabled = archiveExtractionBusy || archiveListBusy || selectable.length === 0;
+  selectAll.checked = selectable.length > 0 && selectedVisible === selectable.length;
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < selectable.length;
+}
+function archiveFolderHref(id) {
+  return `/api/open-archive-folder?id=${encodeURIComponent(id || '')}`;
+}
+function archiveFolderLink(id, label, extraClass = '') {
+  if (!id) return escapeHtml(label || '');
+  const classes = `archive-file-link${extraClass ? ` ${extraClass}` : ''}`;
+  return `<a class="${classes}" data-open-archive-folder href="${escapeHtml(archiveFolderHref(id))}" title="Open containing folder">${escapeHtml(label || '')}</a>`;
+}
+function renderArchiveLogMessage(entry) {
+  const message = String(entry.message || '');
+  const archiveName = String(entry.archive_name || '');
+  if (!entry.archive_id || !archiveName) return escapeHtml(message);
+  const index = message.indexOf(archiveName);
+  if (index < 0) return escapeHtml(message);
+  return `${escapeHtml(message.slice(0, index))}${archiveFolderLink(entry.archive_id, archiveName, 'archive-log-file-link')}${escapeHtml(message.slice(index + archiveName.length))}`;
+}
+function updateArchiveLogFilterButton(entries = archiveProgressEntries) {
+  const button = $('archive-log-failures');
+  if (!button) return;
+  const failures = entries.filter(entry => entry.level === 'error').length;
+  button.textContent = archiveLogFailuresOnly
+    ? `Show all entries (${prettyNum(entries.length)})`
+    : `Show failures only (${prettyNum(failures)})`;
+  button.setAttribute('aria-pressed', String(archiveLogFailuresOnly));
+}
+function renderArchiveProgressLog(entries = archiveProgressEntries) {
+  const log = $('archive-progress-log');
+  archiveProgressEntries = entries;
+  const visible = archiveLogFailuresOnly ? entries.filter(entry => entry.level === 'error') : entries;
+  const lastEntry = entries.length ? entries[entries.length - 1] : null;
+  const signature = `${archiveLogFailuresOnly ? 'failures' : 'all'}:${entries.length}:${lastEntry ? `${lastEntry.at || ''}:${lastEntry.message || ''}:${lastEntry.archive_id || ''}` : ''}`;
+  updateArchiveLogFilterButton(entries);
+  if (signature === archiveProgressLogSignature) return;
+  if (archiveLogFailuresOnly && visible.length === 0) {
+    log.innerHTML = '<div class="archive-progress-empty">No failures recorded for this extraction.</div>';
+  } else {
+    log.innerHTML = visible.map(entry => {
+      const date = entry.at ? new Date(entry.at) : null;
+      const timeLabel = date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString() : (entry.at || '');
+      const level = ['success', 'warning', 'error'].includes(entry.level) ? entry.level : '';
+      return `<div class="archive-progress-entry ${level}"><time datetime="${escapeHtml(entry.at || '')}">${escapeHtml(timeLabel)}</time><span>${renderArchiveLogMessage(entry)}</span></div>`;
+    }).join('');
+  }
+  archiveProgressLogSignature = signature;
+  log.scrollTop = log.scrollHeight;
+}
+function renderArchiveList() {
+  const visible = getVisibleArchiveItems();
+  const hasFilter = $('archive-search').value.trim() !== '' || !allArchiveFormatsSelected
+    || $('archive-unextracted-only').checked;
+  $('archive-count').textContent = hasFilter
+    ? `${prettyNum(visible.length)} of ${prettyNum(archiveItems.length)} archives`
+    : `${prettyNum(archiveItems.length)} archive${archiveItems.length === 1 ? '' : 's'} found`;
+  const host = $('archive-list');
+  if (!archiveItems.length) {
+    host.innerHTML = '<div class="empty"><div class="empty-symbol">▤</div><strong>No archives found</strong><p>Download packages first, then refresh this list.</p></div>';
+    updateArchiveSelectionControls();
+    return;
+  }
+  if (!visible.length) {
+    host.innerHTML = '<div class="empty"><div class="empty-symbol">⌕</div><strong>No matching archives</strong><p>Try another archive name or choose different formats.</p></div>';
+    updateArchiveSelectionControls();
+    return;
+  }
+  const groups = new Map();
+  for (const item of visible) {
+    const key = item.package || '(library root)';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const groupMarkup = [...groups.entries()].map(([packageName, items]) => {
+    const selectable = items.filter(item => item.supported);
+    const selectedInGroup = selectable.filter(item => selectedArchiveIds.has(item.id)).length;
+    const collapsed = collapsedArchivePackages.has(packageName);
+    const rows = items.map(item => {
+      const disabled = !item.supported || archiveExtractionBusy;
+      const note = !item.supported
+        ? '<span class="archive-row-note unsupported">Unsupported format</span>'
+        : item.destination_exists ? '<span class="archive-row-note exists">Extraction folder exists · re-extraction compares files</span>' : '';
+      const lastDate = formatArchiveDate(item.last_extracted_at);
+      const dateTitle = item.last_extracted_at ? new Date(item.last_extracted_at).toLocaleString() :
+        item.destination_exists ? 'Extraction folder exists, but no extraction date was recorded' : 'This archive has not been extracted by LocalDex';
+      return `<div class="archive-row${!item.supported ? ' unsupported' : item.destination_exists ? ' already-extracted' : ''}">
+        <input class="archive-select" type="checkbox" data-archive-id="${escapeHtml(item.id)}" ${selectedArchiveIds.has(item.id) ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="Select ${escapeHtml(item.name)}">
+        <span class="archive-file"><strong title="${escapeHtml(item.name)}">${archiveFolderLink(item.id, item.name, 'archive-name-link')}</strong><small title="${escapeHtml(item.relative_path)}">${archiveFolderLink(item.id, item.relative_path, 'archive-path-link')}</small>${note}</span>
+        <span class="archive-format">${escapeHtml(item.extension)}</span>
+        <span class="archive-size">${prettySize(item.size)}</span>
+        <span class="archive-last-extracted" title="${escapeHtml(dateTitle)}">${escapeHtml(lastDate === 'Never' && item.destination_exists ? 'Not recorded' : lastDate)}</span>
+      </div>`;
+    }).join('');
+    return `<details class="archive-package-group" data-package="${escapeHtml(packageName)}" ${collapsed ? '' : 'open'}>
+      <summary><span class="archive-group-chevron" aria-hidden="true">⌄</span><strong title="${escapeHtml(packageName)}">${escapeHtml(packageName)}</strong>
+        <span class="archive-group-count">${prettyNum(items.length)} archive${items.length === 1 ? '' : 's'}</span>
+        ${selectedInGroup ? `<span class="archive-group-selected">${prettyNum(selectedInGroup)} selected</span>` : ''}</summary>
+      <div class="archive-group-table">
+        <div class="archive-list-header"><span></span><span>Archive / source path</span><span>Format</span><span>Size</span><span>Last extraction</span></div>
+        ${rows}
+      </div>
+    </details>`;
+  }).join('');
+  host.innerHTML = groupMarkup;
+  host.querySelectorAll('.archive-row').forEach(row => {
+    row.addEventListener('click', ev => {
+      if (ev.target.closest('a, input, button, label')) return;
+      const checkbox = row.querySelector('.archive-select');
+      if (!checkbox || checkbox.disabled) return;
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  host.querySelectorAll('details.archive-package-group').forEach(group => {
+    group.addEventListener('toggle', () => {
+      if (group.open) collapsedArchivePackages.delete(group.dataset.package);
+      else collapsedArchivePackages.add(group.dataset.package);
+    });
+  });
+  updateArchiveSelectionControls();
+}
+async function refreshArchiveList() {
+  if (archiveListBusy || archiveExtractionBusy) return;
+  archiveListBusy = true;
+  $('archive-list').innerHTML = `
+    <div class="loading archive-scanning-loading" role="status" aria-live="polite">
+      <span class="archive-scan-visual" aria-hidden="true">
+        <span class="archive-scan-file">
+          <span class="archive-scan-fold"></span>
+          <span class="archive-scan-line line-a"></span>
+          <span class="archive-scan-line line-b"></span>
+          <span class="archive-scan-line line-c"></span>
+          <span class="archive-scan-line line-d"></span>
+        </span>
+        <span class="archive-scan-beam"></span>
+      </span>
+      <span class="archive-scan-message">Scanning downloaded archives…</span>
+    </div>`;
+  updateArchiveSelectionControls();
+  try {
+    const data = await api('/api/archives');
+    archiveItems = Array.isArray(data.archives) ? data.archives : [];
+    const present = new Set(archiveItems.map(item => item.id));
+    for (const id of selectedArchiveIds) if (!present.has(id)) selectedArchiveIds.delete(id);
+    renderArchiveFormatFilter(true);
+    renderArchiveList();
+  } catch (err) {
+    $('archive-list').innerHTML = `<div class="empty"><strong>Could not load archives</strong><p>${escapeHtml(err.message)}</p></div>`;
+  } finally {
+    archiveListBusy = false;
+    updateArchiveSelectionControls();
+  }
+}
+function renderArchiveResults(results) {
+  const details = $('archive-operation-details');
+  if (!results.length) { details.hidden = true; details.innerHTML = ''; return; }
+  details.hidden = false;
+  details.innerHTML = results.map(item => {
+    const cls = item.status === 'extracted' ? 'ready' : item.status === 'skipped' ? 'exists' : 'unsupported';
+    return `<div class="archive-result-row"><span class="archive-state ${cls}">${escapeHtml(item.status)}</span><span><strong>${archiveFolderLink(item.id, item.name || 'Archive', 'archive-result-file-link')}</strong><small>${escapeHtml(item.message || '')}</small></span></div>`;
+  }).join('');
+}
+function appendClientArchiveLog(message, level = 'error') {
+  const log = $('archive-progress-log');
+  const row = document.createElement('div');
+  row.className = `archive-progress-entry ${level}`;
+  const time = document.createElement('time');
+  time.textContent = new Date().toLocaleTimeString();
+  const text = document.createElement('span');
+  text.textContent = message;
+  row.append(time, text);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+function renderArchiveProgress(job) {
+  $('archive-progress-panel').hidden = false;
+  const total = Math.max(0, Number(job.total) || 0);
+  const completed = Math.max(0, Math.min(total, Number(job.completed) || 0));
+  const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
+  $('archive-progress-percent').textContent = `${percent}%`;
+  $('archive-progress-fill').style.width = `${percent}%`;
+  $('archive-progress-track').setAttribute('aria-valuenow', String(percent));
+
+  let summary = `${prettyNum(completed)} of ${prettyNum(total)} selected archives completed`;
+  if (job.status === 'running' && job.current_archive) {
+    summary += ` · Processing ${Math.min(completed + 1, total)} of ${prettyNum(total)}: ${job.current_archive}`;
+  } else if (job.status === 'running' && completed < total) {
+    summary += ' · Preparing the next archive…';
+  }
+  $('archive-progress-summary').innerHTML = job.status === 'running' && job.current_archive
+    ? `${escapeHtml(`${prettyNum(completed)} of ${prettyNum(total)} selected archives completed · Processing ${Math.min(completed + 1, total)} of ${prettyNum(total)}: `)}${archiveFolderLink(job.current_archive_id, job.current_archive, 'archive-summary-file-link')}`
+    : escapeHtml(summary);
+
+  const entries = Array.isArray(job.log) ? job.log : [];
+  renderArchiveProgressLog(entries);
+
+  if (job.status === 'running') {
+    $('archive-operation-status').innerHTML = job.current_archive
+      ? `Extracting ${Math.min(completed + 1, total)} of ${total}: ${archiveFolderLink(job.current_archive_id, job.current_archive, 'archive-status-file-link')}`
+      : `Extraction in progress: ${completed} of ${total} selected archives completed.`;
+  } else if (job.status === 'completed' || job.status === 'completed_with_errors') {
+    const counts = job.counts || {};
+    $('archive-operation-status').textContent = `Extraction finished: ${prettyNum(counts.extracted || 0)} extracted/merged, ${prettyNum(counts.skipped || 0)} skipped, ${prettyNum(counts.failed || 0)} failed.`;
+  } else if (job.status === 'failed') {
+    const lastError = [...entries].reverse().find(entry => entry.level === 'error');
+    $('archive-operation-status').textContent = `Extraction failed${lastError ? `: ${lastError.message}` : '.'}`;
+  }
+  renderArchiveResults(Array.isArray(job.results) ? job.results : []);
+}
+async function monitorArchiveExtraction(jobId) {
+  let consecutiveErrors = 0;
+  while (archiveExtractionJobId === jobId) {
+    try {
+      const job = await api(`/api/archive-extraction-progress?job_id=${encodeURIComponent(jobId)}`);
+      consecutiveErrors = 0;
+      renderArchiveProgress(job);
+      if (job.status !== 'running') return job;
+    } catch (err) {
+      consecutiveErrors += 1;
+      $('archive-operation-status').textContent = `Waiting for extraction progress… (${err.message})`;
+      if (consecutiveErrors >= 10) throw err;
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 450));
+  }
+  throw Error('Archive progress tracking was stopped.');
+}
+async function extractSelectedArchives() {
+  const selectedItems = archiveItems.filter(item => selectedArchiveIds.has(item.id) && item.supported);
+  const ids = selectedItems.map(item => item.id);
+  const replaceExistingIds = selectedItems.filter(item => item.destination_exists).map(item => item.id);
+  if (!ids.length || archiveExtractionBusy) return;
+  let confirmation;
+  if (replaceExistingIds.length) {
+    confirmation = `At least one selected archive already has an extraction folder.\n\nIf you continue, Local Dex will compare the new extraction with the existing files:\n• Identical files will be kept unchanged.\n• If a file differs, the existing version will be kept as a timestamped backup (for example, model_20261027_153700.fbx), and the new version will use the original filename.\n• Files that are not present in the new archive will be kept. Nothing is deleted.\n\nContinue extracting ${ids.length} selected archive(s)?`;
+  } else {
+    confirmation = `Extract ${ids.length} selected archive(s)? Original archives will be preserved.`;
+  }
+  if (!window.confirm(confirmation)) return;
+
+  archiveExtractionBusy = true;
+  archiveExtractionJobId = null;
+  $('archive-operation-details').hidden = true;
+  $('archive-progress-panel').hidden = false;
+  $('archive-progress-percent').textContent = '0%';
+  $('archive-progress-fill').style.width = '0%';
+  $('archive-progress-track').setAttribute('aria-valuenow', '0');
+  $('archive-progress-summary').textContent = `0 of ${prettyNum(ids.length)} selected archives completed`;
+  $('archive-progress-log').innerHTML = '';
+  archiveProgressLogSignature = '';
+  archiveProgressEntries = [];
+  archiveLogFailuresOnly = false;
+  updateArchiveLogFilterButton(archiveProgressEntries);
+  $('archive-operation-status').textContent = `Starting extraction of ${prettyNum(ids.length)} selected archive(s)…`;
+  renderArchiveList();
+  try {
+    const started = await post('/api/extract-archives', { ids, replace_existing_ids: replaceExistingIds });
+    if (!started.job_id) throw Error('The server did not return an extraction job ID.');
+    archiveExtractionJobId = started.job_id;
+    const job = await monitorArchiveExtraction(started.job_id);
+    const counts = job.counts || {};
+    let summary;
+    if (job.status === 'failed') {
+      const lastError = [...(job.log || [])].reverse().find(entry => entry.level === 'error');
+      summary = `Extraction failed${lastError ? `: ${lastError.message}` : '.'}`;
+    } else {
+      summary = `Extraction finished: ${prettyNum(counts.extracted || 0)} extracted/merged, ${prettyNum(counts.skipped || 0)} skipped, ${prettyNum(counts.failed || 0)} failed.`;
+    }
+    $('archive-operation-status').textContent = summary;
+    renderArchiveResults(Array.isArray(job.results) ? job.results : []);
+    selectedArchiveIds.clear();
+    toast(summary);
+    archiveExtractionBusy = false;
+    archiveExtractionJobId = null;
+    await refreshArchiveList();
+  } catch (err) {
+    $('archive-operation-status').textContent = `Extraction failed: ${err.message}`;
+    appendClientArchiveLog(`Extraction failed: ${err.message}`, 'error');
+    toast('Archive extraction failed: ' + err.message);
+  } finally {
+    archiveExtractionBusy = false;
+    archiveExtractionJobId = null;
+    updateArchiveSelectionControls();
+    if (state.page === 'statistics') refreshExtractionStats();
+  }
+}
+
 // Configuration operations always run locally via the Dex server, not in the browser.
 let configFetching = false;
 let configLastAssetEnd = null;
@@ -760,6 +1204,10 @@ async function replyConfigPrompt() {
 }
 
 function bind() {
+  setSidebarCollapsed(document.documentElement.dataset.sidebarCollapsed === 'true');
+  $('sidebar-toggle').addEventListener('click', () => {
+    setSidebarCollapsed(document.documentElement.dataset.sidebarCollapsed !== 'true', true);
+  });
   document.body.addEventListener('click', async ev => {
     const button = ev.target.closest('[data-action]');
     if (!button) return;
@@ -826,6 +1274,46 @@ function bind() {
   $('config-send-code').addEventListener('click', replyConfigPrompt);
   $('config-code').addEventListener('keydown', ev => { if (ev.key === 'Enter') replyConfigPrompt(); });
   $('config-recheck').addEventListener('click', () => refreshConfiguration(true));
+  $('archives-refresh').addEventListener('click', refreshArchiveList);
+  $('archive-search').addEventListener('input', renderArchiveList);
+  $('archive-unextracted-only').addEventListener('change', renderArchiveList);
+  $('archive-format-options').addEventListener('change', handleArchiveFormatChange);
+  $('archive-log-failures').addEventListener('click', () => {
+    archiveLogFailuresOnly = !archiveLogFailuresOnly;
+    archiveProgressLogSignature = '';
+    renderArchiveProgressLog(archiveProgressEntries);
+  });
+  document.addEventListener('click', async ev => {
+    const formatMenu = $('archive-format-menu');
+    if (formatMenu && formatMenu.open && !formatMenu.contains(ev.target)) formatMenu.open = false;
+    const link = ev.target.closest('a[data-open-archive-folder]');
+    if (!link || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault();
+    if (link.dataset.opening === '1') return;
+    link.dataset.opening = '1';
+    try {
+      await api(link.getAttribute('href'));
+      toast('Opened containing folder');
+    } catch (err) {
+      toast(`Could not open archive folder: ${err.message}`);
+    } finally {
+      delete link.dataset.opening;
+    }
+  });
+  $('archives-select-all').addEventListener('change', ev => {
+    const visibleSelectable = getVisibleArchiveItems().filter(item => item.supported);
+    if (ev.target.checked) visibleSelectable.forEach(item => selectedArchiveIds.add(item.id));
+    else visibleSelectable.forEach(item => selectedArchiveIds.delete(item.id));
+    renderArchiveList();
+  });
+  $('archive-list').addEventListener('change', ev => {
+    const checkbox = ev.target.closest('.archive-select');
+    if (!checkbox) return;
+    if (checkbox.checked) selectedArchiveIds.add(checkbox.dataset.archiveId);
+    else selectedArchiveIds.delete(checkbox.dataset.archiveId);
+    renderArchiveList();
+  });
+  $('extract-archives').addEventListener('click', extractSelectedArchives);
   $('config-edit').addEventListener('click', async () => {
     try { await post('/api/configuration/open-file', {}); toast('Configuration opened in the text editor'); }
     catch (err) { toast(err.message); }

@@ -11,31 +11,38 @@
       try {
         const saved = localStorage.getItem('synty-local-dex-theme-v1');
         if (saved === 'light') theme = 'light';
-      } catch (_) { /* Continue with the dark default when storage is unavailable. */ }
+        if (localStorage.getItem('synty-local-dex-sidebar-collapsed-v1') === '1') {
+          document.documentElement.dataset.sidebarCollapsed = 'true';
+        }
+      } catch (_) { /* Continue with defaults when browser storage is unavailable. */ }
       document.documentElement.dataset.theme = theme;
     })();
   </script>
   <title>Local Dex | Your Synty Library</title>
-  <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
-  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="apple-touch-icon" href="/logo.png">
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
-  <aside class="sidebar">
-    <a class="brand" href="/" aria-label="Local Dex home">
-      <img class="brand-logo" src="/logo.png" alt="Local Dex logo">
-      <div class="brand-copy"><strong>LOCAL<span>DEX</span></strong><small>SYNTY ASSET LIBRARY</small></div>
-    </a>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <a class="brand" href="/" aria-label="Local Dex home" title="Local Dex home">
+        <img class="brand-logo" src="/logo.png" alt="Local Dex logo">
+        <div class="brand-copy"><strong>LOCAL<span>DEX</span></strong><small>SYNTY ASSET LIBRARY</small></div>
+      </a>
+      <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-label="Collapse sidebar"
+        aria-controls="sidebar" aria-expanded="true" title="Collapse sidebar"><span aria-hidden="true">‹</span></button>
+    </div>
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="nav-list" aria-label="Browse">
-      <button class="nav-link active" data-page="overview"><span class="nav-icon">◫</span> Overview</button>
-      <button class="nav-link" data-page="packs"><span class="nav-icon">▦</span> Asset packs <span id="side-pack-count" class="nav-count">—</span></button>
-      <button class="nav-link" data-page="assets"><span class="nav-icon">◇</span> Assets <span id="side-asset-count" class="nav-count">—</span></button>
-      <button class="nav-link" data-page="statistics"><span class="nav-icon">▥</span> Statistics</button>
-      <button class="nav-link" data-page="configuration"><span class="nav-icon">⚙</span> Configuration</button>
+      <button class="nav-link active" data-page="overview" aria-label="Overview" title="Overview"><span class="nav-icon" aria-hidden="true">◫</span> Overview</button>
+      <button class="nav-link" data-page="packs" aria-label="Asset packs" title="Asset packs"><span class="nav-icon" aria-hidden="true">▦</span> Asset packs <span id="side-pack-count" class="nav-count">—</span></button>
+      <button class="nav-link" data-page="assets" aria-label="Assets" title="Assets"><span class="nav-icon" aria-hidden="true">◇</span> Assets <span id="side-asset-count" class="nav-count">—</span></button>
+      <button class="nav-link" data-page="statistics" aria-label="Statistics" title="Statistics"><span class="nav-icon" aria-hidden="true">▥</span> Statistics</button>
+      <button class="nav-link" data-page="extra-tools" aria-label="Extra tools" title="Extra tools"><span class="nav-icon" aria-hidden="true">⚒</span> Extra tools</button>
+      <button class="nav-link" data-page="configuration" aria-label="Configuration" title="Configuration"><span class="nav-icon" aria-hidden="true">⚙</span> Configuration</button>
     </nav>
     <div class="sidebar-label sidebar-label-second">COLLECTIONS</div>
     <nav id="sidebar-collections" class="nav-list" aria-label="Collections"></nav>
@@ -46,7 +53,6 @@
       </button>
       <div class="offline-pill"><span class="status-dot"></span> 100% LOCAL · PRIVATE</div>
       <span id="index-date" class="sidebar-index-date">Not indexed</span>
-      <div class="sidebar-note">This browser uses only the assets stored on your computer. No cloud service or account required.</div>
     </div>
   </aside>
 
@@ -64,6 +70,17 @@
         <div class="stat-card"><span class="stat-label">DOWNLOADED FILES</span><div class="stat-value" id="stat-files">—</div><span class="stat-foot">Stored on this PC</span><div class="stat-icon">↓</div></div>
         <div class="stat-card"><span class="stat-label">STORAGE USED</span><div class="stat-value" id="stat-bytes">—</div><span class="stat-foot">Original asset files</span><div class="stat-icon">◈</div></div>
       </section>
+
+        <div class="stats-extraction-heading">
+          <div><h3>Archive extractions</h3><p>Current extraction state for supported archive formats.</p></div>
+          <span id="stats-extraction-latest" class="stats-extraction-latest">Latest successful extraction: —</span>
+        </div>
+        <section id="stats-extraction-grid" class="stat-grid stats-extraction-grid" aria-label="Archive extraction statistics">
+          <div class="stat-card"><span class="stat-label">SUPPORTED ARCHIVES</span><div class="stat-value" id="stat-extraction-archives">—</div><span class="stat-foot">Formats LocalDex can extract</span></div>
+          <div class="stat-card"><span class="stat-label">EXTRACTION FOLDERS</span><div class="stat-value" id="stat-extraction-folders">—</div><span class="stat-foot">Destination folders currently present</span></div>
+          <div class="stat-card"><span class="stat-label">NOT YET EXTRACTED</span><div class="stat-value" id="stat-extraction-unextracted">—</div><span class="stat-foot">No destination folder found</span></div>
+          <div class="stat-card"><span class="stat-label">RECORDED EXTRACTIONS</span><div class="stat-value" id="stat-extraction-recorded">—</div><span class="stat-foot">Successful dates recorded by LocalDex</span></div>
+        </section>
 
         <div class="stats-breakdowns">
           <section class="stats-breakdown" aria-labelledby="stats-collections-title">
@@ -85,6 +102,70 @@
         </div>
       </section>
 
+      <section id="extra-tools-view" class="extra-tools-view" hidden aria-label="Extra tools">
+        <div class="section-top extra-tools-page-heading">
+          <div><div class="eyebrow">LOCAL UTILITIES</div><h2>Extra tools</h2>
+            <p>Additional utilities for your local asset library.</p></div>
+        </div>
+        <div class="extra-tools-tabs" role="tablist" aria-label="Extra tools">
+          <button type="button" id="extra-tools-tab-extract" class="extra-tool-tab active" role="tab"
+            aria-selected="true" aria-controls="extra-tools-panel-extract">Extract archives</button>
+        </div>
+        <section id="extra-tools-panel-extract" class="extra-tools-panel" role="tabpanel"
+          aria-labelledby="extra-tools-tab-extract">
+          <div class="section-top extra-tools-heading">
+            <div><h3>Extract archives</h3>
+              <p>Find downloaded package archives and extract them into folders beside the originals.</p></div>
+            <button type="button" class="btn btn-outline" id="archives-refresh">Refresh archive list</button>
+          </div>
+          <div class="archive-filters">
+            <label class="archive-search-wrap" for="archive-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="archive-search" type="search" placeholder="Search archive name…" autocomplete="off">
+            </label>
+            <div class="archive-format-wrap" id="archive-format-wrap">
+              <span>Format</span>
+              <details class="archive-format-menu" id="archive-format-menu">
+                <summary id="archive-format-summary">All formats</summary>
+                <div class="archive-format-options" id="archive-format-options">
+                  <label class="archive-format-option archive-format-all"><input type="checkbox" id="archive-format-all" checked> All formats</label>
+                  <div id="archive-format-checkboxes"></div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="archive-selection-bar">
+            <label class="archive-select-all"><input type="checkbox" id="archives-select-all"> Select all visible</label>
+            <span id="archive-count" class="archive-summary-count">— archives</span>
+            <span id="archive-selection-count" class="archive-selection-count">0 selected</span>
+            <div class="archive-extract-actions">
+              <label class="archive-unextracted-filter" for="archive-unextracted-only">
+                <input type="checkbox" id="archive-unextracted-only">
+                <span>Unextracted only</span>
+              </label>
+              <button type="button" class="btn btn-primary" id="extract-archives" disabled>Extract archives</button>
+            </div>
+          </div>
+          <p id="archive-operation-status" class="archive-operation-status" role="status" aria-live="polite">
+            Original archives are preserved. When re-extracting, changed files are kept as timestamped backups; files absent from the new archive are retained.
+          </p>
+          <section id="archive-progress-panel" class="archive-progress-panel" hidden aria-label="Archive extraction progress">
+            <div class="archive-progress-heading"><strong>Extraction progress</strong><span id="archive-progress-percent">0%</span></div>
+            <div id="archive-progress-track" class="archive-progress-track" role="progressbar" aria-label="Selected archives completed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="archive-progress-fill" class="archive-progress-fill"></div>
+            </div>
+            <p id="archive-progress-summary" class="archive-progress-summary">0 of 0 selected archives completed</p>
+            <div class="archive-log-heading"><strong>Progress log</strong>
+              <button type="button" class="btn btn-outline archive-log-filter" id="archive-log-failures" aria-pressed="false">Show failures only (0)</button>
+            </div>
+            <div id="archive-progress-log" class="archive-progress-log" role="log" aria-live="polite" aria-relevant="additions text"></div>
+          </section>
+          <div id="archive-operation-details" class="archive-operation-details" hidden></div>
+          <div id="archive-list" class="archive-list" aria-live="polite">
+            <div class="loading">Archive list will appear here.</div>
+          </div>
+        </section>
+      </section>
       <section id="configuration-view" class="configuration-view" hidden aria-label="Local Dex configuration">
         <div class="section-top config-heading">
           <div><div class="eyebrow">LOCAL WORKSPACE</div><h2>Configuration</h2>

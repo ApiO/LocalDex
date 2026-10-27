@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
+#!/usr/bin/env python3
 """Local-only web interface for the Synty Dex catalog. Standard-library server."""
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import tarfile
 import zipfile
+from datetime import datetime
 from pathlib import PurePosixPath
 import sys
 import threading
@@ -26,9 +27,10 @@ from build_local_dex import (DEFAULT_LIBRARY, DEFAULT_INDEX_DIR, VIEWABLE_ASSETS
                              build, connect_db)
 from fbx_geometry import FBXPreviewError, MAX_FBX_BYTES, parse_fbx_geometry, thumbnail_svg
 from dex_operations import DexOperations, JobError
+from archive_extractor import list_archives, extract_selected_archives
 
 WEB_DIR = Path(__file__).resolve().parent / 'local_dex_web'
-MAX_BODY = 4096
+MAX_BODY = 65536
 # Media is served on demand to the loopback browser, never written into the library.
 # Caps protect against very large archives, decompression bombs, and memory pressure.
 PREVIEW_FORMATS = {
@@ -54,6 +56,105 @@ def reveal_file(path: Path) -> None:
         subprocess.Popen(['open', '-R', str(path)])
     else:
         subprocess.Popen(['xdg-open', str(path.parent)])
+
+
+def open_folder(path: Path) -> None:
+    """Open a directory in the host operating system's file manager."""
+    if sys.platform == 'win32':
+        subprocess.Popen(['explorer.exe', str(path)])
+    elif sys.platform == 'darwin':
+        subprocess.Popen(['open', str(path)])
+    else:
+        subprocess.Popen(['xdg-open', str(path)])
+
+
+def _append_archive_job_log(job: dict, message: str, level: str = 'info',
+                            archive_id: str | None = None,
+                            archive_name: str | None = None) -> None:
+    entry = {
+        'at': datetime.now().astimezone().isoformat(timespec='seconds'),
+        'message': str(message),
+        'level': level,
+    }
+    if archive_id:
+        entry['archive_id'] = archive_id
+    if archive_name:
+        entry['archive_name'] = archive_name
+    job['log'].append(entry)
+    # Bound memory use even if a job is interrupted or receives many errors.
+    if len(job['log']) > 2500:
+        del job['log'][:len(job['log']) - 2500]
+
+
+def _run_archive_extraction_job(server: 'LocalDexServer', job_id: str,
+                                selected: list[str], replace_existing: set[str]) -> None:
+    """Run extraction off-request-thread while publishing per-archive progress."""
+    def progress(event: dict) -> None:
+        with server.archive_jobs_lock:
+            job = server.archive_jobs.get(job_id)
+            if job is None:
+                return
+            if event.get('event') == 'start':
+                job['current_archive'] = event.get('name') or 'Archive'
+                job['current_archive_id'] = event.get('id')
+                _append_archive_job_log(
+                    job, f"Starting {event.get('index', job['completed'] + 1)}/"
+                    f"{event.get('total', job['total'])}: {job['current_archive']}",
+                    archive_id=event.get('id'), archive_name=job['current_archive'])
+                return
+            if event.get('event') != 'complete':
+                return
+            result = event.get('result') or {}
+            job['completed'] = min(job['total'], job['completed'] + 1)
+            job['percent'] = round(job['completed'] * 100 / job['total']) if job['total'] else 100
+            job['current_archive'] = None
+            job['current_archive_id'] = None
+            job['results'].append(result)
+            status = result.get('status', 'processed')
+            level = 'error' if status == 'failed' else 'warning' if status == 'skipped' else 'success'
+            message = f"Completed {job['completed']}/{job['total']}: {result.get('name', 'Archive')} — {status}."
+            if result.get('message'):
+                message += f" {result['message']}"
+            _append_archive_job_log(job, message, level,
+                                    archive_id=result.get('id'), archive_name=result.get('name'))
+
+    try:
+        result = extract_selected_archives(
+            server.root, selected,
+            server.index_dir / 'archive_extractions.json',
+            replace_existing,
+            progress_callback=progress,
+        )
+        with server.archive_jobs_lock:
+            job = server.archive_jobs.get(job_id)
+            if job is not None:
+                job['results'] = result.get('results', job['results'])
+                job['counts'] = result.get('counts', {})
+                job['completed'] = min(job['total'], len(job['results']))
+                job['percent'] = round(job['completed'] * 100 / job['total']) if job['total'] else 100
+                job['current_archive'] = None
+                job['current_archive_id'] = None
+                job['status'] = 'completed' if result.get('ok') else 'completed_with_errors'
+                counts = job['counts']
+                _append_archive_job_log(
+                    job,
+                    f"Finished: {counts.get('extracted', 0)} extracted/merged, "
+                    f"{counts.get('skipped', 0)} skipped, {counts.get('failed', 0)} failed.",
+                    'success' if result.get('ok') else 'warning',
+                )
+    except Exception as exc:
+        with server.archive_jobs_lock:
+            job = server.archive_jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'failed'
+                job['current_archive'] = None
+                job['current_archive_id'] = None
+                _append_archive_job_log(job, f'Extraction job failed: {str(exc) or type(exc).__name__}', 'error')
+    finally:
+        if server.index_lock.locked():
+            server.index_lock.release()
+        if server.archive_lock.locked():
+            server.archive_lock.release()
 
 
 class LocalDexHandler(BaseHTTPRequestHandler):
@@ -97,6 +198,50 @@ class LocalDexHandler(BaseHTTPRequestHandler):
         try:
             if path == '/api/catalog':
                 return self.json_response(self.load_manifest())
+            if path == '/api/archives':
+                return self.json_response({'archives': list_archives(self.server.root, self.server.index_dir / 'archive_extractions.json')})
+            if path == '/api/archive-statistics':
+                archives = list_archives(self.server.root, self.server.index_dir / 'archive_extractions.json')
+                supported = [item for item in archives if item.get('supported')]
+                recorded_dates = [item['last_extracted_at'] for item in supported
+                                  if isinstance(item.get('last_extracted_at'), str) and item['last_extracted_at']]
+                return self.json_response({
+                    'supported_archives': len(supported),
+                    'extraction_folders': sum(1 for item in supported if item.get('destination_exists')),
+                    'unextracted_archives': sum(1 for item in supported if not item.get('destination_exists')),
+                    'recorded_extractions': len(recorded_dates),
+                    'latest_extraction_at': max(recorded_dates) if recorded_dates else None,
+                })
+            if path == '/api/open-archive-folder':
+                identifier = parse_qs(url.query).get('id', [''])[0]
+                if len(identifier) != 24 or any(char not in '0123456789abcdef' for char in identifier):
+                    return self.error_json(400, 'Invalid archive ID.')
+                archive = next((item for item in list_archives(
+                    self.server.root, self.server.index_dir / 'archive_extractions.json'
+                ) if item['id'] == identifier), None)
+                if archive is None:
+                    return self.error_json(404, 'Archive not found. Refresh the archive list.')
+                candidate = self.server.root.joinpath(*PurePosixPath(archive['relative_path']).parts)
+                if candidate.is_symlink() or not candidate.is_file():
+                    return self.error_json(404, 'Archive file is no longer available.')
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(self.server.root) or not resolved.parent.is_dir():
+                    return self.error_json(403, 'Archive folder is outside the library.')
+                open_folder(resolved.parent)
+                return self.json_response({'ok': True, 'folder': str(resolved.parent)})
+            if path == '/api/archive-extraction-progress':
+                job_id = parse_qs(url.query).get('job_id', [''])[0]
+                if not job_id or len(job_id) > 64 or any(char not in '0123456789abcdef' for char in job_id):
+                    return self.error_json(400, 'Invalid archive extraction job ID.')
+                with self.server.archive_jobs_lock:
+                    job = self.server.archive_jobs.get(job_id)
+                    if job is None:
+                        return self.error_json(404, 'Archive extraction job not found.')
+                    snapshot = dict(job)
+                    snapshot['log'] = [dict(entry) for entry in job['log']]
+                    snapshot['results'] = [dict(entry) for entry in job['results']]
+                    snapshot['counts'] = dict(job['counts']) if isinstance(job.get('counts'), dict) else None
+                return self.json_response(snapshot)
             if path == '/api/configuration':
                 return self.json_response(self.server.operations.snapshot(force=parse_qs(url.query).get('refresh') == ['1']))
             if path == '/api/session':
@@ -114,18 +259,16 @@ class LocalDexHandler(BaseHTTPRequestHandler):
             if path in ('/', '/index.html'):
                 f = WEB_DIR / 'index.html'
                 return self.respond(200, f.read_bytes(), 'text/html; charset=utf-8')
+            if path == '/logo.png':
+                f = Path(__file__).resolve().parent.parent / 'logo.png'
+                if not f.is_file():
+                    return self.error_json(404, 'Logo not found')
+                if f.stat().st_size > 2_000_000:
+                    return self.error_json(413, 'Logo image too large')
+                return self.respond(200, f.read_bytes(), 'image/png', 'public, max-age=86400')
             if path in ('/styles.css', '/app.js', '/fbx_viewer.js'):
                 f = WEB_DIR / path[1:]
                 return self.respond(200, f.read_bytes(), 'text/css; charset=utf-8' if path.endswith('.css') else 'text/javascript; charset=utf-8', 'no-cache')
-            # Branding files are deliberately allowlisted; do not serve arbitrary local paths.
-            brand_media = {
-                '/logo.png': 'image/png',
-                '/favicon.png': 'image/png',
-                '/favicon.ico': 'image/x-icon',
-            }
-            if path in brand_media:
-                f = WEB_DIR / path[1:]
-                return self.respond(200, f.read_bytes(), brand_media[path], 'no-cache')
             return self.error_json(404, 'Not found')
         except (sqlite3.Error, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as ex:
             return self.error_json(500, str(ex))
@@ -342,11 +485,74 @@ class LocalDexHandler(BaseHTTPRequestHandler):
                 return self.error_json(413, 'Invalid request size')
             data = json.loads(self.rfile.read(size)) if size else {}
             path = urlsplit(self.path).path
+            if path == '/api/extract-archives':
+                selected = data.get('ids')
+                if (not isinstance(selected, list) or not selected or len(selected) > 1000
+                        or any(not isinstance(item, str) or len(item) != 24
+                               or any(char not in '0123456789abcdef' for char in item)
+                               for item in selected)):
+                    return self.error_json(400, 'Select between 1 and 1000 valid archive IDs.')
+                selected = list(dict.fromkeys(selected))
+                replace_existing = data.get('replace_existing_ids', [])
+                if (not isinstance(replace_existing, list)
+                        or any(not isinstance(item, str) or len(item) != 24
+                               or any(char not in '0123456789abcdef' for char in item)
+                               for item in replace_existing)
+                        or any(item not in selected for item in replace_existing)):
+                    return self.error_json(400, 'Invalid confirmation list for existing extraction folders.')
+                # Acquire both operation locks before acknowledging the job, so other
+                # Local Dex jobs cannot start while archive extraction is queued/running.
+                with self.server.operations.lock:
+                    if self.server.operations.active:
+                        return self.error_json(409, 'Another Local Dex operation is running.')
+                    if not self.server.archive_lock.acquire(blocking=False):
+                        return self.error_json(409, 'Archive extraction is already running.')
+                    if not self.server.index_lock.acquire(blocking=False):
+                        self.server.archive_lock.release()
+                        return self.error_json(409, 'Indexing is already running.')
+                job_id = secrets.token_hex(12)
+                now = datetime.now().astimezone().isoformat(timespec='seconds')
+                job = {
+                    'job_id': job_id,
+                    'status': 'running',
+                    'total': len(selected),
+                    'completed': 0,
+                    'percent': 0,
+                    'current_archive': None,
+                    'current_archive_id': None,
+                    'log': [{'at': now, 'message': f'Extraction started for {len(selected)} selected archive(s).', 'level': 'info'}],
+                    'results': [],
+                    'counts': None,
+                }
+                try:
+                    with self.server.archive_jobs_lock:
+                        # Keep only a bounded history of recent jobs.
+                        finished = [key for key, value in self.server.archive_jobs.items()
+                                    if value.get('status') != 'running']
+                        while len(self.server.archive_jobs) >= 20 and finished:
+                            self.server.archive_jobs.pop(finished.pop(0), None)
+                        self.server.archive_jobs[job_id] = job
+                    worker = threading.Thread(
+                        target=_run_archive_extraction_job,
+                        args=(self.server, job_id, selected, set(replace_existing)),
+                        name='LocalDexArchiveExtraction', daemon=True,
+                    )
+                    worker.start()
+                except Exception as exc:
+                    with self.server.archive_jobs_lock:
+                        self.server.archive_jobs.pop(job_id, None)
+                    self.server.index_lock.release()
+                    self.server.archive_lock.release()
+                    return self.error_json(500, f'Could not start archive extraction: {exc}')
+                return self.json_response({'ok': True, 'job_id': job_id}, 202)
             if path == '/api/configuration/start':
                 action = data.get('action')
                 if action not in ('install', 'downloads', 'assets'):
                     return self.error_json(400, 'Unknown operation')
-                self.server.operations.start(action, headless=data.get('headless') is True)
+                with self.server.operations.lock:
+                    if self.server.archive_lock.locked():
+                        return self.error_json(409, 'Archive extraction is running.')
+                    self.server.operations.start(action, headless=data.get('headless') is True)
                 return self.json_response({'ok': True, 'action': action}, 202)
             if path == '/api/configuration/reply':
                 reply = data.get('code', '')
@@ -413,6 +619,9 @@ class LocalDexServer(ThreadingHTTPServer):
         self.index_dir = (Path(index_dir) if index_dir is not None else DEFAULT_INDEX_DIR).expanduser().resolve()
         self.token = secrets.token_urlsafe(32)
         self.index_lock = threading.Lock()
+        self.archive_lock = threading.Lock()
+        self.archive_jobs_lock = threading.Lock()
+        self.archive_jobs: dict[str, dict] = {}
         self.operations = DexOperations(WEB_DIR.parent, self.root, self.index_dir, build, self.index_lock)
 
 
