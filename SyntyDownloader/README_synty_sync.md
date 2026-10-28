@@ -118,6 +118,46 @@ Equivalent direct invocation from the repository root:
 **LocalDex is not available on Linux.** Use the downloader scripts to create or
 update `SyntyLibrary`; open that library with LocalDex on a Windows machine.
 
+## Linux archive extraction CLI
+
+`extract_archives.sh` runs `extract_archives.py` to extract supported archives
+from the configured `output_dir`, without needing LocalDex or its web UI. Run it
+from the repository root after installing the downloader dependencies:
+
+```bash
+chmod +x SyntyDownloader/extract_archives.sh
+./SyntyDownloader/extract_archives.sh
+```
+
+The extractor reads `output_dir` from root `config.yml` or `config.yaml` (relative
+paths are resolved from the configuration file's directory). It scans the
+library recursively and does not ask for confirmation.
+
+- **Unity packages:** `.unitypackage` files are always ignored.
+- **Existing files:** identical files are skipped. If an extracted file differs,
+  the previous version is renamed with a `YYYYMMDD_HHMMSS` timestamp before the
+  extension, then the new version is installed. Existing files not present in
+  the archive are retained.
+- **Progress and errors:** the console shows a progress bar, percentage, and
+  completed archive count. Progress and detailed errors are also written to
+  `output_dir/.extract_archives.log` by default.
+- **Formats:** ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, TAR.XZ/TXZ, GZIP, BZIP2 and
+  XZ are supported directly. RAR and 7z require `7z` or `7zz` to be available
+  on `PATH`.
+- **Safety:** path traversal, symbolic links and special files are rejected;
+  extraction is limited to 200,000 entries and 200 GiB of uncompressed data
+  per archive.
+
+Use an alternate configuration file or log path if needed:
+
+```bash
+./SyntyDownloader/extract_archives.sh --config /path/to/config.yaml
+./SyntyDownloader/extract_archives.sh --log-file /path/to/extraction.log
+```
+
+The extraction log is kept inside the configured library by default. Do not
+extract the same library concurrently from multiple processes.
+
 ## Useful CLI options
 
 - `--check-config`: validate configuration without opening Chromium.

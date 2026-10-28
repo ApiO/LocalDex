@@ -46,7 +46,16 @@ chmod +x SyntyDownloader/install_synty_sync.sh SyntyDownloader/run_synty_sync.sh
 
 The Linux launcher opens Chromium for sign-in and a one-package test, then starts a full headless sync. To run a single CLI action, pass arguments such as `--check-config`, `--limit-packages 1`, `--headless`, or `--dry-run` to `run_synty_sync.sh`. The root `config.yaml` and relative `output_dir` setting are shared across platforms.
 
-**LocalDex is Windows-only.** The Linux downloader can create or update `SyntyLibrary`; use LocalDex on Windows to index, browse, and extract those files. Windows and Linux use separate Chromium profiles, but the download history and log live in the library folder. Do not run syncs from both systems concurrently against the same library.
+**LocalDex is Windows-only.** The Linux downloader can create or update `SyntyLibrary`; use LocalDex on Windows to index and browse those files. The standalone Linux CLI can also extract supported downloaded archives without the LocalDex web UI:
+
+```bash
+chmod +x SyntyDownloader/extract_archives.sh
+./SyntyDownloader/extract_archives.sh
+```
+
+The extractor reads `output_dir` from the root `config.yml` or `config.yaml` and scans that library recursively. It never extracts `.unitypackage` files and never asks for confirmation. Identical existing files are skipped; when a file differs, its previous version is renamed with a `YYYYMMDD_HHMMSS` timestamp before the new file is installed. Other files already in the destination are retained. Progress is reported as a percentage of archives processed, and progress/errors are written to the console and `SyntyLibrary/.extract_archives.log` by default. ZIP and TAR variants, GZIP/BZIP2/XZ files are supported directly; RAR/7z need `7z` or `7zz` installed. Use `--config PATH` or `--log-file PATH` to override the defaults.
+
+Windows and Linux use separate Chromium profiles, but the download history and log live in the library folder. Do not run syncs from both systems concurrently against the same library.
 
 ## Project layout
 ```text
@@ -69,7 +78,9 @@ LocalDex/
 │   ├── run_synty_sync.ps1       # Windows workflow
 │   ├── run_synty_sync.cmd       # Windows launcher
 │   ├── install_synty_sync.sh    # Linux installer
-│   ├── run_synty_sync.sh        # Linux launcher
+│   ├── run_synty_sync.sh        # Linux downloader launcher
+│   ├── extract_archives.py      # Non-interactive Linux CLI archive extractor
+│   ├── extract_archives.sh      # Archive extraction launcher
 │   └── README_synty_sync.md
 ├── SyntyLibrary/                # Downloaded assets, excluded from Git
 │   └── <pack name>/
