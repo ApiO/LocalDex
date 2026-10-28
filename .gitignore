@@ -36,6 +36,7 @@ dist/
 
 # Downloader: authentication/session data and sync history
 .synty_browser_profile/
+.synty_browser_profile_*/
 .synty_history.json
 .synty_sync.log
 # Alternative session/profile names (if configured)

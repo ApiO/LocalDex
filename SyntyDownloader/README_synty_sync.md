@@ -1,124 +1,153 @@
-# SyntyDownloader — standalone synchronization guide
+# SyntyDownloader — Windows and Linux
 
-SyntyDownloader uses a Playwright-controlled Chromium browser to download
-files that your account is authorized to access from Synty Store. It does not
-change your Synty account, delete existing downloads, or bypass MFA/CAPTCHA.
-For the recommended Web UI workflow, start with the [root README](../README.md).
+`synty_sync.py` is the shared Python command-line downloader for synchronizing
+the Synty Store files available to your account. Windows and Linux have separate
+install/run scripts; the download logic and configuration format are shared.
 
-## What it does
+**Platform support:** SyntyDownloader CLI supports Windows and Linux. The
+LocalDex web UI, indexer, and archive tools are **Windows-only**.
 
-- Opens `https://syntystore.com/apps/downloads/orders/<customer_id>` and
-  follows the **My downloads** pagination.
-- Discovers pack pages using `.sky-pilot-files-list` and downloads the files
-  linked by `a.button.sky-pilot-button`.
-- Supports an interactive sign-in and email verification code when required.
-- Reuses a local Chromium browser profile for later runs.
-- Saves files to `<output_dir>/<pack name>/<downloaded filename>` without
-  extracting ZIP or Unity packages.
-- Records successful download URLs/paths in `.synty_history.json`, skipping
-  files already present and recorded in the history.
-- Never deletes or overwrites existing asset files. When different downloads
-  produce the same name, it uses a distinct filename.
-- Logs failures and continues with other files where possible; interrupted
-  downloads are not marked as successfully completed.
+## What the downloader does
 
-## Setup (Windows)
+- Uses Chromium controlled by Playwright to access your Synty Store downloads.
+- Supports interactive sign-in and email-delivered verification codes when the
+  store requests them; it does not bypass CAPTCHA, MFA, or access controls.
+- Follows the paginated library and visits the package download pages.
+- Saves original files under `<output_dir>/<package name>/<filename>` without
+  extracting, deleting, or silently overwriting downloaded archives.
+- Stores a durable `.synty_history.json` so already downloaded files can be
+  skipped on subsequent runs.
+- Logs progress and failures in `.synty_sync.log`; failed transfers are not
+  marked as successful.
 
-From the repository root:
+## Shared configuration
 
-1. Copy `config.example.yaml` to **`config.yaml`** and edit the values.
-2. Run **`install.cmd`** to install or reuse Python 3.10+, create
-   `SyntyDownloader/.venv`, install dependencies, and install Playwright Chromium.
-3. For Web UI control, launch `launch_localdex.cmd`, open **Configuration**,
-   and use **Sync downloads**.
-
-`SyntyDownloader/synty_requirements.txt` lists Playwright, Beautiful Soup 4
-and PyYAML. The installer avoids permanently changing Windows PowerShell
-execution-policy settings.
-
-### Root configuration
+The configuration is stored at the **repository root**, above `SyntyDownloader`:
 
 ```yaml
-# LocalDex/config.yaml — never commit account credentials
+# config.yaml — private, Git-ignored
 output_dir: SyntyLibrary
 login:
   email: "your-email@example.com"
-  password: ""  # optional; Synty may use email OTP authentication
-  customer_id: "1234567890123"
+  password: ""                  # Optional; used only if the form asks for it
+  customer_id: "1234567890123" # Numeric ID from the Synty Store downloads URL
 ```
 
-Relative paths in `output_dir` resolve from the directory containing the
-**root** `config.yaml`, regardless of the current working directory. The
-standard value is `SyntyLibrary`; do not use the previous `../SyntyLibrary`
-value if you have moved the YAML to the repository root.
+If needed, copy the root `config.example.yaml` to root `config.yaml`, then fill
+in the fields. Never commit or share `config.yaml`.
 
-**Where to find `customer_id`:** sign in at
-[syntystore.com](https://syntystore.com/), open **My downloads**, then copy
-the digits after `/apps/downloads/orders/` from the browser URL. You can also
-check the `logged_in_customer_id` query parameter. Do not enter the full URL
-or share private download links.
+- A relative `output_dir` is resolved from the **configuration file's directory**,
+  not from the current working directory. `SyntyLibrary` therefore points to the
+  library folder beside `SyntyDownloader` and `SyntyLocalDex`.
+- `--config PATH` can select a different YAML file. `--output PATH` is available
+  as a manual override for the destination.
+- The downloader stores its history and log in the destination library. Windows
+  keeps using `.synty_browser_profile`; Linux uses `.synty_browser_profile_linux`
+  so the two operating systems do not try to open the same Chromium profile.
+- Do **not** run Windows and Linux syncs concurrently against the same library:
+  the history and log files are shared. Close the first sync before starting the
+  other one.
 
-## CLI usage
+## Windows installation and use
 
-Run these commands **from the repository root** after installation:
+Requirements: Windows 10/11 and Python 3.10+. At the repository root, run
+`install.cmd` to install/repair the local virtual environment and Playwright
+Chromium. For the downloader alone, `SyntyDownloader/install_synty_sync.ps1` is
+the Windows installer called by `install.cmd`.
+
+From the repository root, validate the configuration and test a single package:
 
 ```powershell
-# Validate YAML (does not launch Chromium)
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --check-config
-
-# Discover candidate downloads without saving files
-.\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --dry-run
-
-# First interactive login / one pack
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --limit-packages 1
-
-# Synchronize the full library with a saved authenticated session
 .\SyntyDownloader\.venv\Scripts\python.exe .\SyntyDownloader\synty_sync.py --headless
 ```
 
-`SyntyDownloader/run_synty_sync.cmd` runs an interactive one-pack sync followed
-by a headless full sync. If the saved session has expired, run without
-`--headless` and enter the email verification code in Chromium or the calling
-interface. The old PowerShell `-OutputDir` argument remains accepted for
-compatibility, but the root YAML determines the destination. An explicit
-Python `--output` flag can override it for a manual one-off run.
+`SyntyDownloader/run_synty_sync.cmd` runs the default two-stage workflow:
+interactive sign-in and a one-package test, followed by a full headless sync.
 
-## Output and state
+## Linux installation and use
+
+Requirements: Linux, Python 3.10+ with `venv` support, and internet access.
+On Debian/Ubuntu, if Python or virtual-environment support is missing, install
+it with:
+
+```bash
+sudo apt update
+sudo apt install python3 python3-venv python3-pip
+```
+
+From the repository root, make the scripts executable and install the downloader:
+
+```bash
+chmod +x SyntyDownloader/install_synty_sync.sh SyntyDownloader/run_synty_sync.sh
+./SyntyDownloader/install_synty_sync.sh
+```
+
+This creates `SyntyDownloader/.venv`, installs the Python dependencies, and
+installs Playwright Chromium. If Chromium reports missing system libraries,
+rerun the installer with `--with-system-deps`; Playwright may use `sudo` to
+install OS packages:
+
+```bash
+./SyntyDownloader/install_synty_sync.sh --with-system-deps
+```
+
+Run the default interactive one-package test followed by a full headless sync:
+
+```bash
+./SyntyDownloader/run_synty_sync.sh
+```
+
+When arguments are provided, the shell launcher passes them directly to the
+Python CLI, so individual operations can be run without the two-stage workflow:
+
+```bash
+./SyntyDownloader/run_synty_sync.sh --check-config
+./SyntyDownloader/run_synty_sync.sh --limit-packages 1
+./SyntyDownloader/run_synty_sync.sh --headless
+./SyntyDownloader/run_synty_sync.sh --dry-run
+```
+
+Equivalent direct invocation from the repository root:
+
+```bash
+./SyntyDownloader/.venv/bin/python ./SyntyDownloader/synty_sync.py --check-config
+```
+
+**LocalDex is not available on Linux.** Use the downloader scripts to create or
+update `SyntyLibrary`; open that library with LocalDex on a Windows machine.
+
+## Useful CLI options
+
+- `--check-config`: validate configuration without opening Chromium.
+- `--limit-packages N`: test only the first `N` packages (`1` is recommended
+  for the first run).
+- `--headless`: run without a visible browser; requires a valid saved session.
+- `--dry-run`: inspect the package list without downloading files or updating
+  download history.
+- `--delay SECONDS`: set the pause between downloads (default: `1`).
+- `--max-pages N`: pagination safety limit (default: `500`).
+- `--config PATH`: use an alternate configuration file.
+- `--output PATH`: manually override `output_dir`.
+
+If the session expires, run without `--headless` and complete the sign-in or
+email-code step in Chromium. The profile is kept under the configured output
+folder. Synty can change its page structure or authentication flow, so a future
+site update may require selector changes.
+
+## Destination layout
 
 ```text
 SyntyLibrary/
-├── ANIMATION - Base Locomotion/
-│   ├── archive_1.zip
-│   └── archive_2.unitypackage
-├── POLYGON - Adventure Pack/
-│   └── adventure_pack.zip
-├── .synty_history.json           # Successful download history
-├── .synty_sync.log               # Operational log
-├── .synty_browser_profile/      # Private Chromium login session
-└── .synty-partials/             # Possible incomplete transfers
+  POLYGON - Adventure Pack/
+    source_files.zip
+  .synty_history.json
+  .synty_sync.log
+  .synty_browser_profile/         # Windows Chromium session
+  .synty_browser_profile_linux/   # Linux Chromium session
+  .synty-partials/                # Temporary transfer fragments, if any
 ```
 
-Actual pack and filenames are supplied by Synty Store. The downloaded files
-remain in their original format. An existing nonempty file is skipped when
-its entry is still present in the download history; deleting a downloaded
-file lets a future run fetch it again. Existing files that are not yet in the
-history might need to be fetched once to compare their content reliably.
-
-## Safety and troubleshooting
-
-- Do not share `config.yaml`, `.synty_browser_profile`, `.synty_history.json`
-  or logs. Download URLs and profile data may contain personal/session details.
-- Do not publish downloaded Synty assets; they retain their own licenses.
-- If the store changes its HTML or authentication steps, selectors and login
-  automation may need updating.
-- Downloads are processed sequentially with a short delay; use the CLI's
-  `--delay` option if you need to slow the sync further.
-- The downloader does not bypass Synty access controls or rate limits.
-- Interrupted transfers may leave files in `.synty-partials`; inspect/remove
-  them manually only when it is safe to do so.
-- Re-run the root `install.cmd` if dependencies or Chromium are missing.
-
-Licensing of LocalDex itself and AI-assisted development disclosures are in
-[LICENSE](../LICENSE), [NOTICE](../NOTICE), and
-[AI-assisted development](../docs/AI_ASSISTED_DEVELOPMENT.md). These documents
-do not change the licenses attached to downloaded Synty assets.
+Downloaded assets retain their own licenses. This tool does not alter the
+account's purchases or attempt to bypass the store's access controls.

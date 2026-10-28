@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Synchronisation non destructive de la bibliothèque Synty Store (Sky Pilot).
+"""Cross-platform, non-destructive Synty Store (Sky Pilot) library sync.
 
-Dépendances : pip install -r synty_requirements.txt
-Puis       : python -m playwright install chromium
-Exemple    : python synty_sync.py --check-config
-
-IMPORTANT : Synty utilise désormais essentiellement une connexion par code e-mail.
-Le compte, le mot de passe facultatif et le répertoire de sortie sont définis
-dans config.yaml, à conserver en local (non suivi par Git). Aucun contournement de CAPTCHA / MFA n'est effectué.
+Supported platforms: Windows and Linux. LocalDex itself is Windows-only.
+Install dependencies with ``python -m pip install -r synty_requirements.txt``
+and Chromium with ``python -m playwright install chromium``.
+Run ``python synty_sync.py --check-config`` to validate the private root
+``config.yaml`` before signing in. Synty may require an email verification code;
+CAPTCHA, MFA, and access controls are never bypassed.
 """
 
 from __future__ import annotations
@@ -573,6 +572,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def browser_profile_dir(root: Path) -> Path:
+    """Keep persistent Chromium profiles separate across operating systems.
+
+    The Windows profile keeps its historical path for backward compatibility.
+    A Linux profile must not open or migrate a Windows Chromium user-data folder.
+    """
+    if sys.platform == "win32":
+        name = ".synty_browser_profile"
+    elif sys.platform.startswith("linux"):
+        name = ".synty_browser_profile_linux"
+    else:
+        name = f".synty_browser_profile_{sys.platform}"
+    return root / name
+
+
 def main() -> int:
     args = build_parser().parse_args()
     if args.max_pages < 1 or args.limit_packages < 0 or args.delay < 0:
@@ -597,7 +611,7 @@ def main() -> int:
     stats = {"downloaded": 0, "skipped": 0, "failed": 0, "empty": 0, "planned": 0}
 
     # Le profil Chromium contient les cookies de session et doit rester privé.
-    profile = root / ".synty_browser_profile"
+    profile = browser_profile_dir(root)
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile),

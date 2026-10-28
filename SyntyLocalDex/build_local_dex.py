@@ -453,6 +453,13 @@ def build(root: Path, *, index_dir: Path | None = None, scan_unity: bool = True,
 
 
 def main() -> int:
+    if os.name != 'nt':
+        print(
+            'The LocalDex indexer is supported on Windows only. '
+            'Linux support is provided for the standalone SyntyDownloader CLI.',
+            file=sys.stderr,
+        )
+        return 2
     ap = argparse.ArgumentParser(description='Build an offline searchable index of downloaded Synty packs')
     ap.add_argument('--root', '--output', dest='root', type=Path, default=DEFAULT_LIBRARY,
                     help='Library directory (default: sibling ../SyntyLibrary)')

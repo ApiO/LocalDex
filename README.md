@@ -1,7 +1,7 @@
 # LocalDex — Synty Downloader & Local Asset Browser
 
 Local, private tools to download, organize, index, explore, and safely extract the Synty Store assets available to your account.
-Local Dex provides a Web UI for setup, catalog browsing, extraction, and statistics; the downloader is also available as a standalone command-line tool.
+LocalDex provides the Web UI, catalog browsing, extraction, and statistics on Windows only. The standalone SyntyDownloader CLI supports both Windows and Linux.
 
 ![LocalDex Web UI — Overview](docs/overview.jpg)
 **Important:**
@@ -32,6 +32,22 @@ login:
   password: ""
   customer_id: "1234567890123"
 ```
+## Linux: standalone downloader only
+
+The downloader runs on Linux without LocalDex. Python 3.10+ and `venv` support are required. From the repository root:
+
+```bash
+chmod +x SyntyDownloader/install_synty_sync.sh SyntyDownloader/run_synty_sync.sh
+./SyntyDownloader/install_synty_sync.sh
+# If Chromium system libraries are missing, use:
+# ./SyntyDownloader/install_synty_sync.sh --with-system-deps
+./SyntyDownloader/run_synty_sync.sh
+```
+
+The Linux launcher opens Chromium for sign-in and a one-package test, then starts a full headless sync. To run a single CLI action, pass arguments such as `--check-config`, `--limit-packages 1`, `--headless`, or `--dry-run` to `run_synty_sync.sh`. The root `config.yaml` and relative `output_dir` setting are shared across platforms.
+
+**LocalDex is Windows-only.** The Linux downloader can create or update `SyntyLibrary`; use LocalDex on Windows to index, browse, and extract those files. Windows and Linux use separate Chromium profiles, but the download history and log live in the library folder. Do not run syncs from both systems concurrently against the same library.
+
 ## Project layout
 ```text
 LocalDex/
@@ -47,10 +63,13 @@ LocalDex/
 │   ├── overview.jpg             # Web UI screenshot
 │   ├── AI_ASSISTED_DEVELOPMENT.md
 │   └── THIRD_PARTY_LICENSES.md
-├── SyntyDownloader/             # Login + download synchronization
+├── SyntyDownloader/             # Shared downloader CLI (Windows + Linux)
 │   ├── synty_sync.py
-│   ├── install_synty_sync.ps1
-│   ├── run_synty_sync.cmd
+│   ├── install_synty_sync.ps1   # Windows installer
+│   ├── run_synty_sync.ps1       # Windows workflow
+│   ├── run_synty_sync.cmd       # Windows launcher
+│   ├── install_synty_sync.sh    # Linux installer
+│   ├── run_synty_sync.sh        # Linux launcher
 │   └── README_synty_sync.md
 ├── SyntyLibrary/                # Downloaded assets, excluded from Git
 │   └── <pack name>/
@@ -84,7 +103,7 @@ root of a pack folder is preferred for its cover (alphabetical selection).
 The indexer reads archive contents without modifying the original downloads.
 ## Optional: Run SyntyDownloader directly
 
-Use these commands **from the repository root**, after running `install.cmd`:
+On Windows, use these commands **from the repository root**, after running `install.cmd`:
 
 ```powershell
 # Validate configuration without logging in
@@ -97,20 +116,23 @@ Use these commands **from the repository root**, after running `install.cmd`:
 ```
 
 Alternatively, run `SyntyDownloader/run_synty_sync.cmd` for an interactive
-one-pack sync followed by a full headless sync. For index-only updates, use
-`SyntyLocalDex/rebuild_local_dex.cmd` or **Configuration → Sync assets**.
-See the [downloader guide](SyntyDownloader/README_synty_sync.md) and
-[Local Dex guide](SyntyLocalDex/README_LOCAL_DEX.md) for technical details.
+one-pack sync followed by a full headless sync. On Linux, use
+`SyntyDownloader/install_synty_sync.sh` and `SyntyDownloader/run_synty_sync.sh`;
+see the Linux section above and the [downloader guide](SyntyDownloader/README_synty_sync.md).
+LocalDex indexing and browsing are Windows-only; for index-only updates on
+Windows, use `SyntyLocalDex/rebuild_local_dex.cmd` or **Configuration → Sync assets**.
+See the [Local Dex guide](SyntyLocalDex/README_LOCAL_DEX.md) for technical details.
 ## Privacy, security and troubleshooting
-- The server listens on **127.0.0.1:8765**; keep the server terminal open.
+- On Windows, the LocalDex server listens on **127.0.0.1:8765**; keep the server terminal open.
 - **Never commit** root `config.yaml`, Chromium profiles, `.synty_history.json`,
   logs, indexes, or downloaded assets. See [`.gitignore`](.gitignore).
 - If downloads require an email verification code, sync without `--headless`
   and complete the authentication in the UI or browser.
 - If downloads aren't visible, use **Configuration → Sync assets / Rebuild
   index**.
-- If Python or Chromium is missing, run **`install.cmd`**, or use the UI's
-  **Install / Repair** action where available.
+- On Windows, if Python or Chromium is missing, run **`install.cmd`**, or use
+  the UI's **Install / Repair** action. On Linux, run
+  `SyntyDownloader/install_synty_sync.sh` (optionally with `--with-system-deps`).
 - If the local server cannot use port 8765, stop the previous instance or
   run `SyntyLocalDex/local_dex_server.py --port 8766`.
 - For stale UI branding, use `Ctrl+F5` to refresh the browser cache.

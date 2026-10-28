@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -86,10 +87,26 @@ def _append_archive_job_log(job: dict, message: str, level: str = 'info',
         del job['log'][:len(job['log']) - 2500]
 
 
+def _archive_statistics(archives: list[dict]) -> dict:
+    """Summarize supported archive extraction state from cached archive records."""
+    supported = [item for item in archives if item.get('supported', True)]
+    recorded_dates = [item['last_extracted_at'] for item in supported
+                      if isinstance(item.get('last_extracted_at'), str) and item['last_extracted_at']]
+    return {
+        'supported_archives': len(supported),
+        'extraction_folders': sum(1 for item in supported if item.get('destination_exists')),
+        'unextracted_archives': sum(1 for item in supported if not item.get('destination_exists')),
+        'recorded_extractions': len(recorded_dates),
+        'latest_extraction_at': max(recorded_dates) if recorded_dates else None,
+    }
+
+
 def _run_archive_extraction_job(server: 'LocalDexServer', job_id: str,
                                 selected: list[str], replace_existing: set[str]) -> None:
     """Run extraction off-request-thread while publishing per-archive progress."""
     def progress(event: dict) -> None:
+        if event.get('event') == 'complete':
+            server.update_archive_cache_after_result(event.get('result') or {})
         with server.archive_jobs_lock:
             job = server.archive_jobs.get(job_id)
             if job is None:
@@ -199,19 +216,11 @@ class LocalDexHandler(BaseHTTPRequestHandler):
             if path == '/api/catalog':
                 return self.json_response(self.load_manifest())
             if path == '/api/archives':
-                return self.json_response({'archives': list_archives(self.server.root, self.server.index_dir / 'archive_extractions.json')})
-            if path == '/api/archive-statistics':
                 archives = list_archives(self.server.root, self.server.index_dir / 'archive_extractions.json')
-                supported = [item for item in archives if item.get('supported')]
-                recorded_dates = [item['last_extracted_at'] for item in supported
-                                  if isinstance(item.get('last_extracted_at'), str) and item['last_extracted_at']]
-                return self.json_response({
-                    'supported_archives': len(supported),
-                    'extraction_folders': sum(1 for item in supported if item.get('destination_exists')),
-                    'unextracted_archives': sum(1 for item in supported if not item.get('destination_exists')),
-                    'recorded_extractions': len(recorded_dates),
-                    'latest_extraction_at': max(recorded_dates) if recorded_dates else None,
-                })
+                self.server.replace_archive_cache(archives)
+                return self.json_response({'archives': archives})
+            if path == '/api/archive-statistics':
+                return self.json_response(self.server.archive_statistics_payload())
             if path == '/api/open-archive-folder':
                 identifier = parse_qs(url.query).get('id', [''])[0]
                 if len(identifier) != 24 or any(char not in '0123456789abcdef' for char in identifier):
@@ -612,6 +621,7 @@ class LocalDexHandler(BaseHTTPRequestHandler):
 
 class LocalDexServer(ThreadingHTTPServer):
     allow_reuse_address = True
+    ARCHIVE_CACHE_TTL_SECONDS = 30.0
 
     def __init__(self, address: tuple[str,int], root: Path, index_dir: Path | None = None):
         super().__init__(address, LocalDexHandler)
@@ -622,10 +632,171 @@ class LocalDexServer(ThreadingHTTPServer):
         self.archive_lock = threading.Lock()
         self.archive_jobs_lock = threading.Lock()
         self.archive_jobs: dict[str, dict] = {}
+        self.archive_cache_lock = threading.RLock()
+        self.archive_cache_refresh_lock = threading.Lock()
+        self.archive_cache_path = self.index_dir / 'archive_statistics_cache.json'
+        self.archive_stats_items: list[dict] | None = None
+        self.archive_stats_cache: dict | None = None
+        self.archive_cache_updated_at = 0.0
+        self.archive_cache_generation = 0
+        self.archive_cache_refreshing = False
+        self.archive_cache_error: str | None = None
+        self._load_archive_cache()
         self.operations = DexOperations(WEB_DIR.parent, self.root, self.index_dir, build, self.index_lock)
+
+    @staticmethod
+    def _compact_archive_records(archives: list[dict]) -> list[dict]:
+        # Statistics only need these fields; the full archive list is fetched fresh
+        # by /api/archives and is intentionally not duplicated in the cache file.
+        return [{
+            'id': item.get('id'),
+            'supported': bool(item.get('supported')),
+            'destination_exists': bool(item.get('destination_exists')),
+            'last_extracted_at': item.get('last_extracted_at') if isinstance(item.get('last_extracted_at'), str) else None,
+        } for item in archives if item.get('supported') and isinstance(item.get('id'), str)]
+
+    def _load_archive_cache(self) -> None:
+        try:
+            payload = json.loads(self.archive_cache_path.read_text(encoding='utf-8'))
+            records = payload.get('archives')
+            if not isinstance(records, list):
+                return
+            compact = [item for item in records if isinstance(item, dict) and isinstance(item.get('id'), str)]
+            stats = _archive_statistics(compact)
+            updated = float(payload.get('updated_at_epoch', 0.0))
+            if updated <= 0:
+                return
+            with self.archive_cache_lock:
+                self.archive_stats_items = compact
+                self.archive_stats_cache = stats
+                self.archive_cache_updated_at = updated
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            # A missing or corrupt cache is recoverable; the API rebuilds it in the background.
+            return
+
+    def _persist_archive_cache_locked(self) -> None:
+        try:
+            self.index_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                'version': 1,
+                'updated_at_epoch': self.archive_cache_updated_at,
+                'updated_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+                'archives': self.archive_stats_items or [],
+                'stats': self.archive_stats_cache or {},
+            }
+            temporary = self.archive_cache_path.with_name(self.archive_cache_path.name + '.tmp')
+            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+            temporary.replace(self.archive_cache_path)
+        except OSError:
+            # Cache persistence is an optimization and must never block extraction.
+            try:
+                self.archive_cache_path.with_name(self.archive_cache_path.name + '.tmp').unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _replace_archive_cache_locked(self, archives: list[dict]) -> None:
+        self.archive_stats_items = self._compact_archive_records(archives)
+        self.archive_stats_cache = _archive_statistics(self.archive_stats_items)
+        self.archive_cache_updated_at = time.time()
+        self.archive_cache_generation += 1
+        self.archive_cache_error = None
+        self._persist_archive_cache_locked()
+
+    def replace_archive_cache(self, archives: list[dict]) -> None:
+        with self.archive_cache_lock:
+            self._replace_archive_cache_locked(archives)
+
+    def update_archive_cache_after_result(self, result: dict) -> None:
+        """Incrementally refresh the persistent stats cache after each successful extraction."""
+        if result.get('status') != 'extracted':
+            return
+        identifier = result.get('id')
+        if not isinstance(identifier, str):
+            return
+        timestamp = result.get('last_extracted_at')
+        message = str(result.get('message') or '')
+        if 'Extraction date could not be saved:' in message:
+            timestamp = None
+        missing_record = False
+        with self.archive_cache_lock:
+            if self.archive_stats_items is None:
+                missing_record = True
+            else:
+                item = next((entry for entry in self.archive_stats_items if entry.get('id') == identifier), None)
+                if item is None:
+                    missing_record = True
+                else:
+                    item['destination_exists'] = True
+                    if isinstance(timestamp, str) and timestamp:
+                        item['last_extracted_at'] = timestamp
+                    self.archive_stats_cache = _archive_statistics(self.archive_stats_items)
+                    self.archive_cache_updated_at = time.time()
+                    self.archive_cache_generation += 1
+                    self.archive_cache_error = None
+                    self._persist_archive_cache_locked()
+        if missing_record:
+            self.start_archive_cache_refresh()
+
+    def start_archive_cache_refresh(self) -> None:
+        if not self.archive_cache_refresh_lock.acquire(blocking=False):
+            return
+        with self.archive_cache_lock:
+            self.archive_cache_refreshing = True
+            self.archive_cache_error = None
+            generation_at_start = self.archive_cache_generation
+
+        def refresh_worker() -> None:
+            try:
+                archives = list_archives(self.root, self.index_dir / 'archive_extractions.json')
+                with self.archive_cache_lock:
+                    # Do not overwrite a newer per-extraction cache update with a scan
+                    # that started before that extraction completed.
+                    if self.archive_cache_generation == generation_at_start:
+                        self._replace_archive_cache_locked(archives)
+            except Exception as exc:
+                with self.archive_cache_lock:
+                    self.archive_cache_error = str(exc) or type(exc).__name__
+            finally:
+                with self.archive_cache_lock:
+                    self.archive_cache_refreshing = False
+                self.archive_cache_refresh_lock.release()
+
+        try:
+            threading.Thread(target=refresh_worker, name='LocalDexArchiveStatsCache', daemon=True).start()
+        except Exception:
+            with self.archive_cache_lock:
+                self.archive_cache_refreshing = False
+                self.archive_cache_error = 'Could not start archive statistics refresh.'
+            self.archive_cache_refresh_lock.release()
+
+    def archive_statistics_payload(self) -> dict:
+        with self.archive_cache_lock:
+            has_cache = self.archive_stats_cache is not None
+            stale = not has_cache or (time.time() - self.archive_cache_updated_at) > self.ARCHIVE_CACHE_TTL_SECONDS
+        if stale:
+            self.start_archive_cache_refresh()
+        with self.archive_cache_lock:
+            stats = dict(self.archive_stats_cache) if self.archive_stats_cache is not None else None
+            refreshing = self.archive_cache_refreshing
+            error = self.archive_cache_error
+            updated_at = self.archive_cache_updated_at or None
+        return {
+            'loading': stats is None and refreshing,
+            'refreshing': refreshing,
+            'stats': stats,
+            'updated_at': updated_at,
+            'error': error,
+        }
 
 
 def main() -> int:
+    if os.name != 'nt':
+        print(
+            'LocalDex is a Windows-only tool. On Linux, use the standalone '
+            'SyntyDownloader scripts in ../SyntyDownloader instead.',
+            file=sys.stderr,
+        )
+        return 2
     parser = argparse.ArgumentParser(description='Browse your downloaded Synty files locally')
     parser.add_argument('--root', '--output', type=Path, default=DEFAULT_LIBRARY,
                         help='Library directory (default: sibling ../SyntyLibrary)')

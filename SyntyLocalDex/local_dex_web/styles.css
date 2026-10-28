@@ -285,6 +285,10 @@ video.inspector-media { width: 100%; }
 .stats-extraction-heading h3 { margin: 0; font-size: 15px; font-weight: 750; color: var(--txt); }
 .stats-extraction-heading p { margin: 5px 0 0; color: var(--sub); font-size: 11px; }
 .stats-extraction-latest { color: var(--sub); font-size: 11px; overflow-wrap: anywhere; }
+.stats-history-loading { display: inline-flex; align-items: center; gap: 8px; min-height: 27px; color: var(--sub); white-space: nowrap; }
+.stats-history-scan { display: inline-block; position: relative; width: 20px; height: 26px; flex: 0 0 20px; }
+.stats-history-scan-scale { display: block; position: absolute; top: 0; left: 0; width: 54px; height: 70px; transform: scale(.34); transform-origin: top left; }
+.stats-history-loading .archive-scan-visual { margin: 0; }
 .statistics-view .stats-extraction-grid { margin-top: 14px; }
 
 /* The right inspector scrolls independently; header and footer remain visible. */
@@ -819,6 +823,7 @@ html[data-sidebar-collapsed="true"] .sidebar-bottom .offline-pill .status-dot { 
   padding: 36px 10px;
 }
 .archive-scanning-loading::before { content: none; display: none; }
+.index-scanning-loading { min-height: 220px; }
 .archive-scan-visual {
   position: relative;
   display: block;

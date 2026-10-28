@@ -366,29 +366,96 @@ function renderStats() {
   const date = new Date(state.catalog.generated_at);
   $('index-date').textContent = isNaN(date.valueOf()) ? 'Catalog loaded' : `Indexed ${date.toLocaleDateString()}`;
 }
+function archiveScanVisualMarkup() {
+  return `<span class="archive-scan-visual" aria-hidden="true">
+    <span class="archive-scan-file">
+      <span class="archive-scan-fold"></span>
+      <span class="archive-scan-line line-a"></span>
+      <span class="archive-scan-line line-b"></span>
+      <span class="archive-scan-line line-c"></span>
+      <span class="archive-scan-line line-d"></span>
+    </span>
+    <span class="archive-scan-beam"></span>
+  </span>`;
+}
+function archiveScanningLoadingMarkup(message, className = '') {
+  return `<div class="loading archive-scanning-loading ${className}" role="status" aria-live="polite">
+    ${archiveScanVisualMarkup()}<span class="archive-scan-message">${escapeHtml(message)}</span>
+  </div>`;
+}
+function extractionHistoryLoadingMarkup() {
+  return `<span class="stats-history-loading" role="status" aria-live="polite">
+    <span class="stats-history-scan" aria-hidden="true"><span class="stats-history-scan-scale">${archiveScanVisualMarkup()}</span></span>
+    <span>Loading extraction history…</span>
+  </span>`;
+}
 let extractionStatsRequestId = 0;
-async function refreshExtractionStats() {
-  const request = ++extractionStatsRequestId;
+let extractionStatsCache = null;
+function renderExtractionStats(stats) {
+  $('stat-extraction-archives').textContent = prettyNum(stats.supported_archives);
+  $('stat-extraction-folders').textContent = prettyNum(stats.extraction_folders);
+  $('stat-extraction-unextracted').textContent = prettyNum(stats.unextracted_archives);
+  $('stat-extraction-recorded').textContent = prettyNum(stats.recorded_extractions);
+  const latest = stats.latest_extraction_at ? new Date(stats.latest_extraction_at) : null;
+  const latestLabel = latest && !Number.isNaN(latest.getTime()) ? latest.toLocaleString() : 'Never';
+  $('stats-extraction-latest').textContent = `Latest successful extraction: ${latestLabel}`;
+  $('stats-extraction-latest').title = stats.latest_extraction_at || '';
+}
+function showExtractionStatsLoading() {
   for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
     'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '…';
-  $('stats-extraction-latest').textContent = 'Loading extraction history…';
+  $('stats-extraction-latest').innerHTML = extractionHistoryLoadingMarkup();
+  $('stats-extraction-latest').title = 'Scanning the library for extraction history';
+}
+async function refreshExtractionStats() {
+  const request = ++extractionStatsRequestId;
+  if (extractionStatsCache) renderExtractionStats(extractionStatsCache);
+  let loadingTimer = null;
+  if (!extractionStatsCache) {
+    loadingTimer = window.setTimeout(() => {
+      if (request === extractionStatsRequestId && state.page === 'statistics' && !extractionStatsCache) showExtractionStatsLoading();
+    }, 120);
+  }
   try {
-    const stats = await api('/api/archive-statistics');
-    if (request !== extractionStatsRequestId) return;
-    $('stat-extraction-archives').textContent = prettyNum(stats.supported_archives);
-    $('stat-extraction-folders').textContent = prettyNum(stats.extraction_folders);
-    $('stat-extraction-unextracted').textContent = prettyNum(stats.unextracted_archives);
-    $('stat-extraction-recorded').textContent = prettyNum(stats.recorded_extractions);
-    const latest = stats.latest_extraction_at ? new Date(stats.latest_extraction_at) : null;
-    const latestLabel = latest && !Number.isNaN(latest.getTime()) ? latest.toLocaleString() : 'Never';
-    $('stats-extraction-latest').textContent = `Latest successful extraction: ${latestLabel}`;
-    $('stats-extraction-latest').title = stats.latest_extraction_at || '';
+    let response = await api('/api/archive-statistics');
+    if (loadingTimer !== null) window.clearTimeout(loadingTimer);
+    while (request === extractionStatsRequestId && state.page === 'statistics') {
+      const stats = response && response.stats ? response.stats
+        : response && typeof response.supported_archives === 'number' ? response : null;
+      if (stats) {
+        extractionStatsCache = stats;
+        renderExtractionStats(stats);
+      } else if (response && response.loading && !extractionStatsCache) {
+        if (!$('stats-extraction-latest').querySelector('.stats-history-loading')) showExtractionStatsLoading();
+      }
+      if (!response?.loading && !response?.refreshing) {
+        if (!stats && !extractionStatsCache) {
+          const message = response?.error || 'The extraction history could not be loaded.';
+          for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
+            'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '—';
+          $('stats-extraction-latest').textContent = `Extraction statistics unavailable: ${message}`;
+          $('stats-extraction-latest').title = message;
+        }
+        return;
+      }
+      // Cached stats are rendered immediately while a stale cache refreshes quietly.
+      // Only a cold start (no cached stats at all) displays the animated loading state.
+      await new Promise(resolve => window.setTimeout(resolve, response?.loading ? 350 : 1000));
+      if (request !== extractionStatsRequestId || state.page !== 'statistics') return;
+      response = await api('/api/archive-statistics');
+    }
   } catch (err) {
+    if (loadingTimer !== null) window.clearTimeout(loadingTimer);
     if (request !== extractionStatsRequestId) return;
-    for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
-      'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '—';
-    $('stats-extraction-latest').textContent = `Extraction statistics unavailable: ${err.message}`;
-    $('stats-extraction-latest').title = err.message;
+    if (extractionStatsCache) {
+      renderExtractionStats(extractionStatsCache);
+      $('stats-extraction-latest').title = `Cached statistics; refresh failed: ${err.message}`;
+    } else {
+      for (const id of ['stat-extraction-archives', 'stat-extraction-folders',
+        'stat-extraction-unextracted', 'stat-extraction-recorded']) $(id).textContent = '—';
+      $('stats-extraction-latest').textContent = `Extraction statistics unavailable: ${err.message}`;
+      $('stats-extraction-latest').title = err.message;
+    }
   }
 }
 function packById() { return state.catalog.packs.find(p => p.id === state.pack); }
@@ -518,7 +585,7 @@ async function refresh(more = false) {
     state.currentPage = 1; state.items = [];
     autoMoreBlocked = false;
     $('load-more').hidden = true;
-    $('results').innerHTML = '<div class="loading">Searching the local index…</div>';
+    $('results').innerHTML = archiveScanningLoadingMarkup('Searching the local index…', 'index-scanning-loading');
   }
   const params = new URLSearchParams({ view, q: state.search, collection: state.collection,
     kind: state.kind, category: state.category, engine: state.engine,
@@ -944,20 +1011,7 @@ function renderArchiveList() {
 async function refreshArchiveList() {
   if (archiveListBusy || archiveExtractionBusy) return;
   archiveListBusy = true;
-  $('archive-list').innerHTML = `
-    <div class="loading archive-scanning-loading" role="status" aria-live="polite">
-      <span class="archive-scan-visual" aria-hidden="true">
-        <span class="archive-scan-file">
-          <span class="archive-scan-fold"></span>
-          <span class="archive-scan-line line-a"></span>
-          <span class="archive-scan-line line-b"></span>
-          <span class="archive-scan-line line-c"></span>
-          <span class="archive-scan-line line-d"></span>
-        </span>
-        <span class="archive-scan-beam"></span>
-      </span>
-      <span class="archive-scan-message">Scanning downloaded archives…</span>
-    </div>`;
+  $('archive-list').innerHTML = archiveScanningLoadingMarkup('Scanning downloaded archives…');
   updateArchiveSelectionControls();
   try {
     const data = await api('/api/archives');
