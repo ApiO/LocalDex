@@ -84,6 +84,43 @@ if [[ ! -f "$REQUIREMENTS" ]]; then
     exit 1
 fi
 
+# A previous interrupted setup can leave a valid venv interpreter without pip.
+# Try the interpreter's bundled ensurepip first, before running pip commands.
+ensure_pip() {
+    if "$VENV_PYTHON" -m pip --version >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo '[WARN] pip is missing from the downloader virtual environment.' >&2
+    echo 'Attempting to bootstrap pip with Python ensurepip...' >&2
+    if "$VENV_PYTHON" -m ensurepip --upgrade; then
+        if "$VENV_PYTHON" -m pip --version >/dev/null 2>&1; then
+            echo '[OK] pip is available.'
+            return 0
+        fi
+    fi
+
+    local python_version
+    python_version="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    cat >&2 <<ERROR
+[ERROR] Could not install pip into: $VENV_DIR
+
+This usually means the OS package providing venv/ensurepip for Python $python_version
+is missing. On Debian/Ubuntu, install the matching package(s):
+  sudo apt update
+  sudo apt install python3-venv python${python_version}-venv
+
+Then rerun this installer. If the same incomplete environment is still detected,
+move it aside first (it will be kept as a backup):
+  mv "$VENV_DIR" "${VENV_DIR}.incomplete-$(date +%Y%m%d_%H%M%S)"
+  "$SCRIPT_DIR/install_synty_sync.sh"
+ERROR
+    return 1
+}
+
+echo 'Checking pip in the virtual environment...'
+ensure_pip || exit 1
+
 echo 'Installing/updating Python dependencies...'
 "$VENV_PYTHON" -m pip install --upgrade pip
 "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS"
