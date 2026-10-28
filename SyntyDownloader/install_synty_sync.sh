@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the standalone Synty Store downloader on Linux.
+# Install the standalone Synty Store downloader on Linux (including WSL2).
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +16,8 @@ Usage: ./install_synty_sync.sh [--with-system-deps]
 Creates SyntyDownloader/.venv, installs Python dependencies, and installs
 Playwright Chromium. Use --with-system-deps if Chromium's Linux libraries are
 missing; Playwright may request sudo to install OS packages.
+
+Run this installer as your normal Linux user, not with sudo. WSL2 is supported.
 USAGE
 }
 
@@ -27,14 +29,40 @@ for arg in "$@"; do
     esac
 done
 
+# Keep the virtual environment and Playwright cache owned by the user who runs
+# the downloader. A root-owned venv can break later launches from a normal shell.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    cat >&2 <<'ERROR'
+[ERROR] Do not run this installer as root or with sudo.
+It installs a user-owned Python environment and Playwright browser cache.
+Run it from your normal WSL/Linux user shell instead:
+  ./SyntyDownloader/install_synty_sync.sh
+ERROR
+    exit 1
+fi
+
 find_python() {
     local candidate
-    for candidate in "${PYTHON:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+    local -a candidates=()
+
+    if [[ -n "${PYTHON:-}" ]]; then
+        candidates+=("$PYTHON")
+    fi
+
+    # Discover installed versioned interpreters (including newer versions such
+    # as python3.14) instead of maintaining a fixed list in the installer.
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        [[ "$candidate" == "${PYTHON:-}" ]] || candidates+=("$candidate")
+    done < <(compgen -c | grep -E '^python3\.[0-9]+$' | sort -Vr | uniq || true)
+    candidates+=(python3)
+
+    for candidate in "${candidates[@]}"; do
         [[ -n "$candidate" ]] || continue
         if ! command -v "$candidate" >/dev/null 2>&1; then
             continue
         fi
-        if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+        if "$candidate" -c 'import sys, venv; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
             command -v "$candidate"
             return 0
         fi
@@ -42,51 +70,63 @@ find_python() {
     return 1
 }
 
-echo '=== SyntyDownloader — Linux setup ==='
+echo '=== SyntyDownloader — Linux / WSL2 setup ==='
 if ! PYTHON_BIN="$(find_python)"; then
     cat >&2 <<'ERROR'
-[ERROR] Python 3.10+ was not found.
-Install Python 3.10 or newer and its venv support. On Debian/Ubuntu, for example:
-  sudo apt update
-  sudo apt install python3 python3-venv python3-pip
-Then rerun this installer.
+[ERROR] Python 3.10+ with the standard-library venv module was not found.
+Install Python 3.10 or newer and your distribution's venv support, then rerun.
+On Debian/Ubuntu (including Ubuntu on WSL2), this is commonly provided by
+python3-venv or a version-specific package such as python3.14-venv.
+For other distributions, install the equivalent package using its package manager.
 ERROR
     exit 1
 fi
 printf 'Python: %s\n' "$PYTHON_BIN"
-
-if ! "$PYTHON_BIN" -c 'import venv' >/dev/null 2>&1; then
-    cat >&2 <<'ERROR'
-[ERROR] Python's venv module is unavailable.
-On Debian/Ubuntu, install the matching python3-venv package, then rerun this installer.
-ERROR
-    exit 1
-fi
-
-if [[ -e "$VENV_DIR" && ! -x "$VENV_PYTHON" ]]; then
-    echo "[ERROR] $VENV_DIR exists but has no usable Python interpreter." >&2
-    echo 'Move or remove this incomplete virtual environment manually, then rerun.' >&2
-    exit 1
-fi
-
-if [[ ! -x "$VENV_PYTHON" ]]; then
-    echo 'Creating local Python virtual environment...'
-    "$PYTHON_BIN" -m venv "$VENV_DIR"
-fi
-if ! "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
-    echo "[ERROR] $VENV_PYTHON is not a usable Python 3.10+ interpreter." >&2
-    echo 'Move or remove SyntyDownloader/.venv manually, then rerun this installer.' >&2
-    exit 1
-fi
 
 if [[ ! -f "$REQUIREMENTS" ]]; then
     echo "[ERROR] Requirements file not found: $REQUIREMENTS" >&2
     exit 1
 fi
 
-# A previous interrupted setup can leave a valid venv interpreter without pip.
-# Try the interpreter's bundled ensurepip first, before running pip commands.
+if [[ ! -w "$SCRIPT_DIR" ]]; then
+    echo "[ERROR] The project directory is not writable by user $(id -un): $SCRIPT_DIR" >&2
+    echo 'Ensure the project files are owned by your normal user, then rerun without sudo.' >&2
+    exit 1
+fi
+if [[ -e "$VENV_DIR" && ! -w "$VENV_DIR" ]]; then
+    echo "[ERROR] The virtual environment is not writable by user $(id -un): $VENV_DIR" >&2
+    echo 'It may have been created by an earlier sudo run. Restore ownership, for example:' >&2
+    printf '  sudo chown -R %q:%q %q\n' "$(id -un)" "$(id -gn)" "$VENV_DIR" >&2
+    exit 1
+fi
+
+if [[ -e "$VENV_DIR" && ! -x "$VENV_PYTHON" ]]; then
+    echo "[ERROR] $VENV_DIR exists but has no usable Python interpreter." >&2
+    echo 'Move this incomplete virtual environment to a backup, then rerun.' >&2
+    exit 1
+fi
+
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    echo 'Creating local Python virtual environment (pip bootstrap is handled separately)...'
+    if ! "$PYTHON_BIN" -m venv --without-pip "$VENV_DIR"; then
+        echo "[ERROR] Could not create the virtual environment at: $VENV_DIR" >&2
+        echo 'Check that your Python installation includes the venv module and that the directory is writable.' >&2
+        exit 1
+    fi
+fi
+
+if ! "$VENV_PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+    echo "[ERROR] $VENV_PYTHON is not a usable Python 3.10+ interpreter." >&2
+    echo 'Move or rename SyntyDownloader/.venv, then rerun this installer.' >&2
+    exit 1
+fi
+
+# Repair an incomplete venv without deleting it. Some distro Python builds omit
+# ensurepip; in that case, bootstrap pip from the official PyPA HTTPS endpoint.
 ensure_pip() {
+    local bootstrap_script
+    local python_version
+
     if "$VENV_PYTHON" -m pip --version >/dev/null 2>&1; then
         return 0
     fi
@@ -98,24 +138,84 @@ ensure_pip() {
             echo '[OK] pip is available.'
             return 0
         fi
+    else
+        echo '[INFO] ensurepip is unavailable in this Python build.' >&2
     fi
 
-    local python_version
-    python_version="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    echo 'Attempting the official PyPA get-pip.py bootstrap over HTTPS...' >&2
+    if ! bootstrap_script="$(mktemp "${TMPDIR:-/tmp}/localdex-get-pip.XXXXXX.py")"; then
+        echo '[ERROR] Could not create a temporary file for the pip bootstrap.' >&2
+        return 1
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        if ! curl --fail --location --silent --show-error --retry 2 \
+            --connect-timeout 15 'https://bootstrap.pypa.io/get-pip.py' \
+            --output "$bootstrap_script"; then
+            rm -f -- "$bootstrap_script"
+            echo '[ERROR] Could not download the official pip bootstrap script with curl.' >&2
+            print_pip_recovery
+            return 1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! wget -q 'https://bootstrap.pypa.io/get-pip.py' -O "$bootstrap_script"; then
+            rm -f -- "$bootstrap_script"
+            echo '[ERROR] Could not download the official pip bootstrap script with wget.' >&2
+            print_pip_recovery
+            return 1
+        fi
+    else
+        if ! "$PYTHON_BIN" - "$bootstrap_script" <<'PYBOOTSTRAP'
+import sys
+import urllib.request
+urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", sys.argv[1])
+PYBOOTSTRAP
+        then
+            rm -f -- "$bootstrap_script"
+            echo '[ERROR] Could not download the official pip bootstrap script with Python.' >&2
+            print_pip_recovery
+            return 1
+        fi
+    fi
+
+    if ! "$VENV_PYTHON" "$bootstrap_script" --disable-pip-version-check; then
+        rm -f -- "$bootstrap_script"
+        echo '[ERROR] The pip bootstrap script failed.' >&2
+        print_pip_recovery
+        return 1
+    fi
+    rm -f -- "$bootstrap_script"
+
+    if ! "$VENV_PYTHON" -m pip --version >/dev/null 2>&1; then
+        echo '[ERROR] pip is still unavailable after bootstrapping.' >&2
+        print_pip_recovery
+        return 1
+    fi
+    echo '[OK] pip is available.'
+}
+
+print_pip_recovery() {
+    local distro_id=''
+    local distro_like=''
+    local python_version='unknown'
+    if [[ -r /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        distro_id="${ID:-}"
+        distro_like="${ID_LIKE:-}"
+    fi
+    python_version="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || printf unknown)"
     cat >&2 <<ERROR
-[ERROR] Could not install pip into: $VENV_DIR
 
-This usually means the OS package providing venv/ensurepip for Python $python_version
-is missing. On Debian/Ubuntu, install the matching package(s):
+[RECOVERY] pip could not be bootstrapped for Python $python_version.
+Distribution: ${distro_id:-unknown}${distro_like:+ (based on $distro_like)}
+Install the venv/ensurepip support package matching this Python version using
+your distribution's package manager, then move the incomplete environment aside
+and rerun the installer. On Debian/Ubuntu, for example, try:
   sudo apt update
-  sudo apt install python3-venv python${python_version}-venv
-
-Then rerun this installer. If the same incomplete environment is still detected,
-move it aside first (it will be kept as a backup):
-  mv "$VENV_DIR" "${VENV_DIR}.incomplete-$(date +%Y%m%d_%H%M%S)"
-  "$SCRIPT_DIR/install_synty_sync.sh"
+  sudo apt install python${python_version}-venv
+If that versioned package is unavailable, check whether python3-venv is provided.
 ERROR
-    return 1
 }
 
 echo 'Checking pip in the virtual environment...'
@@ -144,7 +244,7 @@ else
 fi
 
 echo
-echo 'SyntyDownloader Linux setup completed.'
+echo 'SyntyDownloader Linux / WSL2 setup completed.'
 echo 'Run a one-package interactive sign-in/test with:'
 echo "  '$SCRIPT_DIR/run_synty_sync.sh'"
 echo 'Or run the CLI directly with:'
